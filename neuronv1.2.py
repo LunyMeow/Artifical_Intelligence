@@ -9,8 +9,7 @@ from matplotlib.colors import Normalize
 from matplotlib.cm import ScalarMappable
 
 
-visualizeNetwork =True
-
+import modeltrainingprogram 
 
 import pyqtgraph as pg
 import networkx as nx
@@ -75,6 +74,9 @@ class Connection:
     def update_weight(self, learning_rate, delta):
         self.weight = learning_rate * delta
 
+
+
+visualizeNetwork =False
 
 
 # Ağ oluşturma
@@ -151,7 +153,6 @@ for conn in connections[0][0]:
 
 """
 
-fig, ax = plt.subplots(figsize=(7,7)) 
 def RandomInput(event):
     for i in layers[0]:
         i.value = random.uniform(0.1, 1)
@@ -186,7 +187,6 @@ def on_mouse_click(event):
     elif event.button == 3:  # Sağ tıklama
         randomWeights(event)
 
-fig.canvas.mpl_connect('button_press_event', on_mouse_click)
 
 
 def scale_value(x, source_min, source_max, target_min, target_max):
@@ -227,7 +227,8 @@ cmd = "refresh()" #program başlar başlamaz çalışacak ilk komut
 
 
 def visualize_network(layers, connections, node_size=20,refresh=False):
-
+    if not visualizeNetwork:
+        return
     global win, plot, scatter, lines, app
 
     if win is None or not refresh:
@@ -857,36 +858,262 @@ def clearGUI():
         win.close()
         win = None
 
+
+
+
+class DynamicNetworkManager:
+    def __init__(self, layers, connections):
+        self.layers = layers
+        self.connections = connections
+        self.complexity_penalty = 0.001  # Aşırı büyümeyi cezalandırma katsayısı
+        self.performance_threshold = 0.1  # Yapısal değişiklik tetikleme eşiği
+        self.error_history = []
+        
+    def adapt_network(self, current_error):
+        """Ağın performansına göre yapısal değişiklikler yapar"""
+        self.error_history.append(current_error)
+        if len(self.error_history) < 5:  # En az 5 iterasyon bekleyelim
+            return
+        
+        # Son 5 hatanın ortalaması
+        avg_error = sum(self.error_history[-5:]) / 5
+        
+        # Hata artıyorsa veya yeterince azalmıyorsa
+        if avg_error > min(self.error_history) + self.performance_threshold:
+            self._modify_architecture(avg_error)
+            
+    def _modify_architecture(self, avg_error):
+        """Ağ mimarisini değiştiren temel operasyonlar"""
+        # Rastgele bir değişiklik türü seç (0: nöron ekle, 1: katman ekle, 2: bağlantı değiştir)
+        action = random.choices([0, 1, 2, 3], weights=[0.4, 0.1, 0.4, 0.1])[0]
+        
+        if action == 0:  # Nöron ekle
+            self._add_neuron_strategically()
+        elif action == 1:  # Katman ekle
+            self._add_layer_strategically()
+        elif action == 2:  # Bağlantıları optimize et
+            self._optimize_connections()
+        else:  # Nöron/kayman sil
+            self._prune_network()
+
+    def _add_neuron_strategically(self):
+        """Hatanın en yüksek olduğu katmana nöron ekler"""
+        # En aktif olmayan katmanı bul
+        layer_idx = self._find_weakest_layer()
+        
+        # Yeni nöron için aktivasyon tipini rastgele seç
+        activation_types = ['sigmoid', 'tanh', 'relu']
+        new_neuron = Neuron(default_value=0.0, 
+                          activation_type=random.choice(activation_types))
+        
+        add_neuron(self.layers, self.connections, layer_idx, new_neuron)
+        print(f"Adaptif nöron eklendi: Katman {layer_idx}, ID {new_neuron.id}")
+
+    def _add_layer_strategically(self):
+        """Ağa yeni bir katman ekler"""
+        if len(self.layers) >= 5:  # Maksimum 5 katman
+            return
+            
+        # En çok hatanın olduğu iki katman arasına ekle
+        layer_idx = self._find_weakest_connection_point()
+        
+        # Yeni katmanda nöron sayısını belirle (ortalama değer)
+        neuron_count = (len(self.layers[layer_idx]) + len(self.layers[layer_idx+1])) // 2
+        new_neurons = [Neuron(0.0) for _ in range(max(2, neuron_count))]
+        
+        addLayer(self.layers, self.connections, layer_idx+1, new_neurons)
+        print(f"Adaptif katman eklendi: Indeks {layer_idx+1}")
+
+    def _optimize_connections(self):
+        """Bağlantı ağırlıklarını ve yapısını optimize eder"""
+        # En zayıf bağlantıları bul
+        weak_connections = self._find_weak_connections(threshold=0.1)
+        
+        for (layer_idx, from_id, conn) in weak_connections:
+            # %50 ihtimalle ya ağırlığını değiştir ya da bağlantıyı kaldır
+            if random.random() < 0.5:
+                # Ağırlığı resetle
+                conn.weight = random.uniform(randomMinWeight, randomMaxWeight)
+                print(f"Bağlantı resetlendi: {from_id}→{conn.connectedTo[1]}")
+            else:
+                # Bağlantıyı tamamen kaldır
+                self.connections[layer_idx][from_id].remove(conn)
+                if not self.connections[layer_idx][from_id]:
+                    del self.connections[layer_idx][from_id]
+                print(f"Bağlantı kaldırıldı: {from_id}→{conn.connectedTo[1]}")
+
+    def _prune_network(self):
+        """Az kullanılan nöronları ve katmanları temizler"""
+        # En az aktif nöronları bul
+        inactive_neurons = self._find_inactive_neurons()
+        
+        for neuron_id in inactive_neurons:
+            removeNeuron(self.layers, self.connections, neuron_id)
+            print(f"Az kullanılan nöron kaldırıldı: {neuron_id}")
+
+        # Eğer katman çok küçülmüşse tamamen kaldır
+        for i in range(1, len(self.layers)-1):
+            if len(self.layers[i]) < 2:
+                removeLayer(self.layers, self.connections, i)
+                print(f"Küçük katman kaldırıldı: {i}")
+                break
+
+    # Yardımcı analiz fonksiyonları
+    def _find_weakest_layer(self):
+        """En düşük aktivasyon ortalamasına sahip katmanı bulur"""
+        layer_activity = []
+        for i, layer in enumerate(self.layers[1:-1]):  # Giriş/çıkış hariç
+            avg_activation = sum(n.value for n in layer) / len(layer)
+            layer_activity.append((i+1, avg_activation))
+        
+        return min(layer_activity, key=lambda x: x[1])[0]
+
+    def _find_weak_connections(self, threshold=0.1):
+        """Zayıf bağlantıları tespit eder"""
+        weak_conns = []
+        for layer_idx in self.connections:
+            for from_id, conn_list in self.connections[layer_idx].items():
+                for conn in conn_list:
+                    from_neuron = get_neuron_by_id(from_id)
+                    to_neuron = get_neuron_by_id(conn.connectedTo[1])
+                    if abs(conn.weight * from_neuron.value) < threshold:
+                        weak_conns.append((layer_idx, from_id, conn))
+        return weak_conns
+
+    def _find_inactive_neurons(self, threshold=0.05):
+        """Belirli bir eşiğin altında aktivite gösteren nöronları bulur"""
+        inactive = []
+        for layer in self.layers[1:-1]:  # Giriş/çıkış hariç
+            for neuron in layer:
+                if abs(neuron.value) < threshold:
+                    inactive.append(neuron.id)
+        return inactive[:2]  # En fazla 2 nöron sil
+
+    def _find_weakest_connection_point(self):
+        """Katmanlar arası en zayıf bağlantı noktasını bulur"""
+        connection_strengths = []
+        for layer_idx in range(len(self.layers)-1):
+            total_strength = 0
+            for conn_list in self.connections[layer_idx].values():
+                for conn in conn_list:
+                    total_strength += abs(conn.weight)
+            connection_strengths.append((layer_idx, total_strength))
+        
+        return min(connection_strengths, key=lambda x: x[1])[0]
+
+
+
+def train_network(X_train, y_train, epochs=100):
+    dynamic_manager = DynamicNetworkManager(layers, connections)
+    
+    for epoch in range(epochs):
+        total_error = 0
+        for X, y in zip(X_train, y_train):
+            # İleri yayılım
+            for i, val in enumerate(X[:len(layers[0])]):
+                layers[0][i].value = val
+            runAI()
+            
+            # Hata hesapla
+            output = [neuron.value for neuron in layers[-1][:len(y)]]
+            error = hata_payi(y, output)
+            total_error += error
+            
+            # Geri yayılım
+            TrainFor(X, y, connections)
+            
+            # Ağ yapısını adapte et
+            dynamic_manager.adapt_network(error)
+        
+        avg_error = total_error / len(X_train)
+        print(f"Epoch {epoch+1}/{epochs}, Error: {avg_error:.4f}, Ağ Boyutu: {sum(len(l) for l in layers)} nöron")
+        
+        # Her 10 epoch'ta bir görselleştir
+        if epoch % 10 == 0:
+            visualize_network(layers, connections, refresh=True)
+
+"""
+# Örnek veri
+X_train = [[0.1, 0.9, 0.2], [0.8, 0.3, 0.5], ...]
+y_train = [[1,0,0], [0,1,0], ...]
+
+# Eğitim başlatma
+train_network(X_train, y_train, epochs=100)"""
+
+def getOutput():
+    outputValues=[]
+    for neuronOnLastLayer in layers[-1]:
+        outputValues.append(str(neuronOnLastLayer.value) + " " + str(neuronOnLastLayer.weightedSum))
+    return outputValues
+
+
 # Terminal giriş döngüsü
 while True:
-    #visualize_network(layers,connections)
-    #visualize_network(layers,connections)
     if cmd == "exit":
         break
+        
     if cmd == "refresh()":
         clearGUI()
         runAI()
         visualize_network(layers, connections, refresh=True)
+        print(getOutput())
         
+    elif cmd == "visualize()":
+        visualizeNetwork = not visualizeNetwork
+        
+    elif cmd == "print_network()":
+        # Ağ yapısını terminale yazdır
+        print("\n=== AĞ YAPISI ===")
+        for i, layer in enumerate(layers):
+            print(f"\nKatman {i} ({len(layer)} nöron):")
+            for neuron in layer:
+                print(f"  Nöron ID: {neuron.id} | Değer: {neuron.value:.4f} | Aktivasyon: {neuron.activation_type}")
+        
+        # Bağlantıları yazdır
+        print("\n=== BAĞLANTILAR ===")
+        for layer_idx in connections:
+            print(f"\nKatman {layer_idx} -> Katman {layer_idx+1}:")
+            for src_id, conn_list in connections[layer_idx].items():
+                for conn in conn_list:
+                    print(f"  {src_id} → {conn.connectedTo[1]} | Ağırlık: {conn.weight:.4f}")
+
+    elif cmd.startswith("get_connection("):
+        try:
+            args = cmd[15:-1].split(",")
+            from_id = int(args[0])
+            to_id = int(args[1])
+            
+            found = False
+            for layer_idx in connections:
+                if from_id in connections[layer_idx]:
+                    for conn in connections[layer_idx][from_id]:
+                        if conn.connectedTo[1] == to_id:
+                            print(f"Bağlantı bilgisi: {from_id} → {to_id} | Ağırlık: {conn.weight:.6f}")
+                            found = True
+                            break
+                    if found:
+                        break
+            if not found:
+                print(f"Bağlantı bulunamadı: {from_id} → {to_id}")
+                
+        except Exception as error:
+            print("Hatalı giriş! Örnek format: get_connection(5,10)")
+            traceback.print_exc()
+
     elif cmd.startswith("add_neuron("):
         try:
-            # Yeni nöron eklemek için komutla alınan argümanları işlemeye çalışıyoruz
             args = cmd[11:-1].split(",")
             layer_idx = int(args[0])
             new_neuron_value = float(args[1])
-
-            total_neurons = sum(len(layer) for layer in layers)
-            #new_neuron_id = int(args[2] if args[2]!=None else total_neurons)
             
             new_neuron = Neuron(default_value=new_neuron_value)
             add_neuron(layers, connections, layer_idx, new_neuron)
-            
+            print(f"{layer_idx}. katmana nöron eklendi. Yeni nöron ID: {new_neuron.id}")
             
         except Exception as error:
             print("Hatalı giriş! Örnek format: add_neuron(layerId,newNeuronValue)")
             traceback.print_exc()
     
-    # Terminal giriş döngüsüne eklemeler
     elif cmd.startswith("removeLayer("):
         try:
             layer_idx = int(cmd[12:-1])
@@ -897,42 +1124,32 @@ while True:
 
     elif cmd.startswith("removeNeuron("):
         try:
-            neuron_id = int(cmd[12:-1])
+            neuron_id = int(cmd[13:-1])
             removeNeuron(layers, connections, neuron_id)
         except Exception as error:
             print("Hatalı giriş! Örnek format: removeNeuron(5)")
             traceback.print_exc()
 
-
     elif cmd.startswith("addLayer("):
         try:
-            # Komuttan parantez içindeki içeriği al
             args_str = cmd[9:-1]
-
-            # Layer index ve nöronları ayır
             parts = args_str.split(";", 1)
             layer_idx = int(parts[0].strip())
 
-            # Nöronları parse et (eğer verilmişse)
             neurons = []
             if len(parts) > 1 and parts[1].strip():
                 neuron_strs = parts[1].split(",")
                 for neuron_str in neuron_strs:
                     neuron_str = neuron_str.strip()
                     if neuron_str.startswith("Neuron("):
-                        # Neuron değerini parantez içinden al
                         value_str = neuron_str[7:-1]
                         value = float(value_str)
                         neurons.append(Neuron(value))
-                    else:
-                        raise ValueError(f"Geçersiz nöron formatı: {neuron_str}")
 
-            # Eğer nöron verilmemişse, önceki katmanın boyutunda varsayılan nöronlar oluştur
             if not neurons:
                 prev_size = len(layers[layer_idx-1]) if layer_idx > 0 else len(layers[0])
                 neurons = [Neuron(0.0) for _ in range(prev_size)]
 
-            # Katmanı ekle
             addLayer(layers, connections, layer_idx, neurons)
             print(f"Katman {layer_idx} başarıyla eklendi. {len(neurons)} nöron içeriyor.")
 
@@ -947,48 +1164,46 @@ while True:
             args = cmd[8:-1].split(";")
             from_id, to_id, new_weight = int(args[0]), int(args[1]), float(args[2])
             change_weight(connections, from_id, to_id, new_weight)
+            print(f"Bağlantı ağırlığı güncellendi: {from_id} → {to_id} = {new_weight:.4f}")
 
         except Exception as error:
             print("Hatalı giriş! Örnek format: changeW(0;5;0.5)")
             traceback.print_exc()
+            
     elif (cmd.startswith("changeN(") and cmd.endswith(")")): 
         try:
             args = cmd[8:-1].split(";")
             id, newValue = int(args[0]),float(args[1])
             get_neuron_by_id(id).value=newValue
+            print(f"Nöron {id} değeri güncellendi: {newValue:.4f}")
 
         except Exception as error:
             print("Hatalı giriş! Örnek format: changeN(0;0.1)")
             traceback.print_exc()
+            
     elif (cmd.startswith("getNeuronV(")and cmd.endswith(")")):
         args = cmd[11:-1].split(";")
         for i in args:
-            print(get_neuron_by_id(int(i)).calculate_weighted_sum(layers,connections))
+            neuron_id = int(i)
+            neuron = get_neuron_by_id(neuron_id)
+            if neuron:
+                print(f"Nöron {neuron_id} Değer: {neuron.value:.4f} | Ağırlıklı Toplam: {neuron.weightedSum:.4f}")
                 
     elif (cmd.startswith("changeInputRandomly(")and cmd.endswith(")")):
-        for i in layers[1]:
+        for i in layers[0]:
             i.value=random.uniform(0.1, 1)
+        print("Giriş katmanı rastgele değerlerle güncellendi")
+        
     elif cmd.startswith("trainFor(") and cmd.endswith(")"):
         try:
-            # Komuttan parametreleri ayıklama
             params = cmd[len("trainFor("):-1].split(';')
-
-            # Giriş değerlerini ayrıştırma
             input_values = list(map(float, params[0].split(',')))
-
-            # Hedef değerleri ayrıştırma
             target_values = list(map(float, params[1].split(',')))
 
-            # Parametreleri ayıkla (varsayılan değerlerle)
             lr = float(params[2]) if len(params) > 2 else 0.1
             boost = float(params[3]) if len(params) > 3 else 2.0
             momentum_val = float(params[4]) if len(params) > 4 else 0.9
             max_grad = float(params[5]) if len(params) > 5 else 1.0
-
-            print(f"Eğitim başlıyor...\n"
-                  f"Giriş: {input_values}\n"
-                  f"Hedef: {target_values}\n"
-                  f"LR: {lr}, Boost: {boost}, Momentum: {momentum_val}, Max Grad: {max_grad}")
 
             TrainFor(input_values, target_values, connections,
                     learning_rate=lr,
@@ -999,30 +1214,38 @@ while True:
             continue
         except Exception as e:
             traceback.print_exc()
-            print("Hatalı komut formatı! Doğru kullanım:\n"
-                  "trainFor(0.1,0.1,-0.7,0,0.9;0,1,0;0.1;2.0;0.9;1.0)\n"
-                  "1. Giriş değerleri (virgülle ayrılmış)\n"
-                  "2. Hedef değerler (virgülle ayrılmış)\n"
-                  "3. Öğrenme oranı (opsiyonel, default:0.1)\n"
-                  "4. Boost faktörü (opsiyonel, default:2.0)\n"
-                  "5. Momentum (opsiyonel, default:0.9)\n"
-                  "6. Max grad norm (opsiyonel, default:1.0)")
+            print("Hatalı komut formatı! Doğru kullanım:\ntrainFor(girişler;hedefler;lr;boost;momentum;max_grad)")
+            
+    elif cmd == "trainFromFile()":
+        try:
+            x,y=modeltrainingprogram.read_csv_file("./ornek_veri.csv")
+            train_network(x,y)
+            print(f"Eğitim tamamlandı. {len(x)} örnek işlendi.")
+        except Exception as e:
+            print(f"Dosya okuma hatası: {str(e)}")
+            
     elif cmd.startswith("set_input"):
         try:
             values = list(map(float, cmd.split()[1:]))
             for i, val in enumerate(values[:len(layers[0])]):
                 layers[0][i].value = val
-            for layer in layers[1:]:
-                for neuron in layer:
-                    neuron.calculate_weighted_sum(layers, connections)
-            
+            print(f"Giriş katmanı güncellendi: {values}")
         except Exception as e:
             print(f"Hata: {e}")
+            
     else:
-        print("Geçersiz komut! Örnek: add_neuron(1,10,0.5) veya exit")
-    
-    #visualize_network(layers, connections)  # Güncellenmiş ağı göster
+        print("\nGeçerli komutlar:")
+        print("- print_network(): Ağ yapısını terminalde göster")
+        print("- get_connection(from_id,to_id): Bağlantı ağırlığını göster")
+        print("- add_neuron(layer_idx,value): Yeni nöron ekle")
+        print("- removeNeuron(id): Nöron sil")
+        print("- addLayer(index;[nöronlar]): Katman ekle")
+        print("- removeLayer(index): Katman sil")
+        print("- changeW(from;to;weight): Ağırlık değiştir")
+        print("- changeN(id;value): Nöron değeri değiştir")
+        print("- trainFor(inputs;targets;[lr]): Eğitim yap")
+        print("- trainFromFile(): Dosyadan eğitim yap")
+        print("- refresh(): Ağı yenile")
+        print("- exit: Çıkış")
 
-    cmd = input("Komut girin (add_neuron(layer_idx,new_neuron_id,value) veya exit): ")
-    
-    
+    cmd = input("\nKomut girin: ")

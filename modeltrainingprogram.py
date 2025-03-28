@@ -1,43 +1,89 @@
-import cv2
-import numpy as np
-import os
+import csv
+from typing import List, Tuple
 
-data_dir = "training_data"
-os.makedirs(data_dir, exist_ok=True)
-
-def save_drawing(label):
-    img = np.ones((200, 200), dtype=np.uint8) * 255
-    drawing = False
-
-    def draw(event, x, y, flags, param):
-        nonlocal drawing
-        if event == cv2.EVENT_LBUTTONDOWN:
-            drawing = True
-        elif event == cv2.EVENT_MOUSEMOVE and drawing:
-            cv2.circle(img, (x, y), 8, (0,), -1)
-        elif event == cv2.EVENT_LBUTTONUP:
-            drawing = False
-
-    cv2.namedWindow("Draw a number")
-    cv2.setMouseCallback("Draw a number", draw)
+def read_csv_file(file_path: str) -> Tuple[List[List[float]], List[List[int]]]:
+    """
+    CSV dosyasından verileri dinamik olarak okur
+    Args:
+        file_path: CSV dosya yolu
+    Returns:
+        X_train: Giriş verileri listesi
+        y_train: Hedef verileri listesi
+    """
+    X_train = []
+    y_train = []
     
-    while True:
-        cv2.imshow("Draw a number", img)
-        key = cv2.waitKey(1)
-        if key == 13:  # Enter key
-            break
+    with open(file_path, mode='r') as csv_file:
+        csv_reader = csv.reader(csv_file)
+        headers = next(csv_reader)  # Başlık satırını oku
+        
+        # Giriş ve hedef sütunlarını otomatik ayır
+        input_cols = [col for col in headers if col.startswith('input')]
+        target_cols = [col for col in headers if col.startswith('target')]
+        
+        input_indices = [headers.index(col) for col in input_cols]
+        target_indices = [headers.index(col) for col in target_cols]
+        
+        for row in csv_reader:
+            # Giriş verilerini float olarak oku
+            inputs = [float(row[i]) for i in input_indices]
+            # Hedef verilerini int olarak oku
+            targets = [int(row[i]) for i in target_indices]
+            
+            X_train.append(inputs)
+            y_train.append(targets)
     
-    cv2.destroyAllWindows()
-    filename = os.path.join(data_dir, f"{label}_{len(os.listdir(data_dir))}.png")
-    cv2.imwrite(filename, img)
-    print(f"Saved: {filename}")
+    return X_train, y_train
 
+def write_csv_file(file_path: str, X_data: List[List[float]], y_data: List[List[int]]):
+    """
+    CSV dosyasına verileri dinamik olarak yazar
+    Args:
+        file_path: Kaydedilecek CSV dosya yolu
+        X_data: Giriş verileri
+        y_data: Hedef verileri
+    """
+    # Sütun başlıklarını otomatik oluştur
+    num_inputs = len(X_data[0]) if X_data else 0
+    num_targets = len(y_data[0]) if y_data else 0
+    
+    input_headers = [f'input{i+1}' for i in range(num_inputs)]
+    target_headers = [f'target{i+1}' for i in range(num_targets)]
+    headers = input_headers + target_headers
+    
+    with open(file_path, mode='w', newline='') as csv_file:
+        writer = csv.writer(csv_file)
+        
+        # Başlıkları yaz
+        writer.writerow(headers)
+        
+        # Verileri yaz
+        for inputs, targets in zip(X_data, y_data):
+            row = inputs + targets
+            writer.writerow(row)
+
+# Kullanım örneği
 if __name__ == "__main__":
-    while True:
-        label = input("Enter the number you drew (0-9) or 'q' to quit: ")
-        if label.lower() == 'q':
-            break
-        if label.isdigit() and 0 <= int(label) <= 9:
-            save_drawing(label)
-        else:
-            print("Invalid input. Please enter a number between 0 and 9.")
+    # Örnek veri
+    X_train = [
+        [0.1, 0.9, 0.2,0.1,0.3],
+        [0.8, 0.3, 0.5,0.2,0.1],
+        [0.4, 0.7, 0.1,0.9,0.3],
+        [0.6, 0.2, 0.8,0.1,0.2]
+    ]
+    y_train = [
+        [1, 0, 0],
+        [0, 1, 0],
+        [0, 0, 1],
+        [1, 0, 0]
+    ]
+    
+    # CSV'ye yazma
+    write_csv_file('ornek_veri.csv', X_train, y_train)
+    print("CSV dosyası başarıyla oluşturuldu.")
+    
+    # CSV'den okuma
+    X_loaded, y_loaded = read_csv_file('ornek_veri.csv')
+    print("\nOkunan veriler:")
+    print("Girişler:", X_loaded)
+    print("Hedefler:", y_loaded)
