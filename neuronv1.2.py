@@ -7,7 +7,6 @@ import math
 
 from matplotlib.colors import Normalize
 from matplotlib.cm import ScalarMappable
-import numpy as np
 
 
 visualizeNetwork =True
@@ -221,6 +220,10 @@ plot = None
 scatter = None
 lines = []
 app = None
+
+cmd = "refresh()" #program başlar başlamaz çalışacak ilk komut
+
+
 
 
 def visualize_network(layers, connections, node_size=20,refresh=False):
@@ -480,6 +483,98 @@ def change_weight(connections, from_id, to_id, new_weight):
     print(f"Hata: {from_id} ile {to_id} arasında bağlantı bulunamadı.")  # Bağlantı bulunamazsa hata mesajı
 
 
+def removeLayer(layers, connections, layer_idx):
+    """
+    Belirtilen indeksteki katmanı ve ilgili bağlantıları siler.
+    
+    :param layers: Nöron katmanları
+    :param connections: Katmanlar arası bağlantılar
+    :param layer_idx: Silinecek katman indeksi
+    """
+    if layer_idx < 0 or layer_idx >= len(layers):
+        print(f"Hata: Geçersiz katman indeksi {layer_idx}")
+        return
+    
+    if len(layers) <= 2:
+        print("Hata: En az bir giriş ve bir çıkış katmanı kalmalıdır")
+        return
+    
+    # Katmanı sil
+    deleted_layer = layers.pop(layer_idx)
+    
+    # Bağlantıları güncelle
+    new_connections = {}
+    
+    # Önceki bağlantıları kopyala (indeksler değişecek)
+    for i in connections:
+        if i < layer_idx - 1:
+            new_connections[i] = connections[i]
+        elif i > layer_idx:
+            new_connections[i-1] = connections[i]
+    
+    # Eğer silinen katman ilk veya son katman değilse, yeni bağlantı oluştur
+    if 0 < layer_idx < len(layers):
+        # Önceki katmandan sonraki katmana doğrudan bağlantı kur
+        new_connections[layer_idx-1] = {}
+        for prev_neuron in layers[layer_idx-1]:
+            for next_neuron in layers[layer_idx]:
+                conn = Connection(fromTo=[prev_neuron.id, next_neuron.id], 
+                                weight=random.uniform(randomMinWeight, randomMaxWeight))
+                if prev_neuron.id not in new_connections[layer_idx-1]:
+                    new_connections[layer_idx-1][prev_neuron.id] = []
+                new_connections[layer_idx-1][prev_neuron.id].append(conn)
+    
+    connections.clear()
+    connections.update(new_connections)
+    
+    print(f"Katman {layer_idx} ve bağlantıları silindi. {len(deleted_layer)} nöron kaldırıldı.")
+
+def removeNeuron(layers, connections, neuron_id):
+    """
+    Belirtilen ID'ye sahip nöronu ve ilgili bağlantıları siler.
+    
+    :param layers: Nöron katmanları
+    :param connections: Katmanlar arası bağlantılar
+    :param neuron_id: Silinecek nöronun ID'si
+    """
+    # Nöronu bul
+    neuron = None
+    layer_idx = -1
+    for i, layer in enumerate(layers):
+        for j, n in enumerate(layer):
+            if n.id == neuron_id:
+                neuron = n
+                layer_idx = i
+                break
+        if neuron is not None:
+            break
+    
+    if neuron is None:
+        print(f"Hata: {neuron_id} ID'li nöron bulunamadı")
+        return
+    
+    # Nöronu katmandan sil
+    layers[layer_idx].remove(neuron)
+    
+    # Gelen bağlantıları sil (önceki katmandan)
+    if layer_idx > 0:
+        for prev_neuron_id in connections[layer_idx-1]:
+            connections[layer_idx-1][prev_neuron_id] = [
+                conn for conn in connections[layer_idx-1][prev_neuron_id] 
+                if conn.connectedTo[1] != neuron_id
+            ]
+            # Eğer boşsa, anahtarı da sil
+            if not connections[layer_idx-1][prev_neuron_id]:
+                del connections[layer_idx-1][prev_neuron_id]
+    
+    # Giden bağlantıları sil (sonraki katmana)
+    if layer_idx < len(layers):
+        if neuron_id in connections[layer_idx]:
+            del connections[layer_idx][neuron_id]
+    
+    print(f"Nöron {neuron_id} katman {layer_idx}'dan silindi ve bağlantılar kaldırıldı.")
+
+
 
 def add_neuron(layers, connections, layer_idx, new_neuron):
     """
@@ -511,7 +606,57 @@ def add_neuron(layers, connections, layer_idx, new_neuron):
 
     print(f"Nöron ID {new_neuron.id} katman {layer_idx} eklendi ve bağlantılar kuruldu.")
     
+def addLayer(layers, connections, layerToAdd, neurons):
+    """
+    Yeni bir katman ekler ve bu katmandaki nöronları önceki ve sonraki katmanlarla bağlar.
 
+    :param layers: Nöron katmanları
+    :param connections: Katmanlar arası bağlantılar
+    :param layerToAdd: Yeni katmanın ekleneceği indeks
+    :param neurons: Yeni katmana eklenecek nöron listesi
+
+    # Mevcut ağa yeni bir gizli katman ekleme
+    new_neurons = [Neuron(1) for _ in range(15)]  # 15 nöronlu yeni katman
+    addLayer(layers, connections, 1, new_neurons)  # İndeks 1'e (giriş ve çıkış arasına) ekle
+    """
+    # Yeni katmanı ekle
+    layers.insert(layerToAdd, neurons)
+    
+    # Bağlantıları güncelle (yeni katman eklenince indeksler kaydı)
+    new_connections = {}
+    for i in connections:
+        if i >= layerToAdd - 1:
+            new_connections[i + 1] = connections[i]
+        else:
+            new_connections[i] = connections[i]
+    connections.clear()
+    connections.update(new_connections)
+    
+    # Yeni katman için bağlantıları oluştur
+    connections[layerToAdd - 1] = {}  # Önceki katmandan yeni katmana bağlantılar
+    connections[layerToAdd] = {}      # Yeni katmandan sonraki katmana bağlantılar
+    
+    # Önceki katmandan yeni katmana bağlantılar
+    if layerToAdd > 0:
+        for prev_neuron in layers[layerToAdd - 1]:
+            for new_neuron in neurons:
+                conn = Connection(fromTo=[prev_neuron.id, new_neuron.id], 
+                                weight=random.uniform(randomMinWeight, randomMaxWeight))
+                if prev_neuron.id not in connections[layerToAdd - 1]:
+                    connections[layerToAdd - 1][prev_neuron.id] = []
+                connections[layerToAdd - 1][prev_neuron.id].append(conn)
+    
+    # Yeni katmandan sonraki katmana bağlantılar
+    if layerToAdd < len(layers) - 1:
+        for new_neuron in neurons:
+            for next_neuron in layers[layerToAdd + 1]:
+                conn = Connection(fromTo=[new_neuron.id, next_neuron.id], 
+                                weight=random.uniform(randomMinWeight, randomMaxWeight))
+                if new_neuron.id not in connections[layerToAdd]:
+                    connections[layerToAdd][new_neuron.id] = []
+                connections[layerToAdd][new_neuron.id].append(conn)
+    
+    print(f"Yeni katman (indeks {layerToAdd}) eklendi ve bağlantılar kuruldu.")
 
 
 
@@ -706,18 +851,23 @@ def train_network(input_data, target_data, connections, learning_rate=0.1, epoch
 
 
 
-
+def clearGUI():
+    global win
+    if win is not None:
+        win.close()
+        win = None
 
 # Terminal giriş döngüsü
-cmd = "refresh()"
 while True:
     #visualize_network(layers,connections)
     #visualize_network(layers,connections)
     if cmd == "exit":
         break
     if cmd == "refresh()":
+        clearGUI()
         runAI()
         visualize_network(layers, connections, refresh=True)
+        
     elif cmd.startswith("add_neuron("):
         try:
             # Yeni nöron eklemek için komutla alınan argümanları işlemeye çalışıyoruz
@@ -735,27 +885,83 @@ while True:
         except Exception as error:
             print("Hatalı giriş! Örnek format: add_neuron(layerId,newNeuronValue)")
             traceback.print_exc()
+    
+    # Terminal giriş döngüsüne eklemeler
+    elif cmd.startswith("removeLayer("):
+        try:
+            layer_idx = int(cmd[12:-1])
+            removeLayer(layers, connections, layer_idx)
+        except Exception as error:
+            print("Hatalı giriş! Örnek format: removeLayer(1)")
+            traceback.print_exc()
+
+    elif cmd.startswith("removeNeuron("):
+        try:
+            neuron_id = int(cmd[12:-1])
+            removeNeuron(layers, connections, neuron_id)
+        except Exception as error:
+            print("Hatalı giriş! Örnek format: removeNeuron(5)")
+            traceback.print_exc()
+
+
+    elif cmd.startswith("addLayer("):
+        try:
+            # Komuttan parantez içindeki içeriği al
+            args_str = cmd[9:-1]
+
+            # Layer index ve nöronları ayır
+            parts = args_str.split(";", 1)
+            layer_idx = int(parts[0].strip())
+
+            # Nöronları parse et (eğer verilmişse)
+            neurons = []
+            if len(parts) > 1 and parts[1].strip():
+                neuron_strs = parts[1].split(",")
+                for neuron_str in neuron_strs:
+                    neuron_str = neuron_str.strip()
+                    if neuron_str.startswith("Neuron("):
+                        # Neuron değerini parantez içinden al
+                        value_str = neuron_str[7:-1]
+                        value = float(value_str)
+                        neurons.append(Neuron(value))
+                    else:
+                        raise ValueError(f"Geçersiz nöron formatı: {neuron_str}")
+
+            # Eğer nöron verilmemişse, önceki katmanın boyutunda varsayılan nöronlar oluştur
+            if not neurons:
+                prev_size = len(layers[layer_idx-1]) if layer_idx > 0 else len(layers[0])
+                neurons = [Neuron(0.0) for _ in range(prev_size)]
+
+            # Katmanı ekle
+            addLayer(layers, connections, layer_idx, neurons)
+            print(f"Katman {layer_idx} başarıyla eklendi. {len(neurons)} nöron içeriyor.")
+
+        except Exception as error:
+            print("Hatalı giriş! Örnek formatlar:")
+            print("addLayer(1)  # Varsayılan nöronlarla katman ekler")
+            print("addLayer(1;Neuron(1),Neuron(0.2),Neuron(-0.5))  # Özel nöronlarla katman ekler")
+            traceback.print_exc()
 
     elif (cmd.startswith("changeW(") and cmd.endswith(")")): 
         try:
-            args = cmd[8:-1].split(",")
+            args = cmd[8:-1].split(";")
             from_id, to_id, new_weight = int(args[0]), int(args[1]), float(args[2])
             change_weight(connections, from_id, to_id, new_weight)
 
         except Exception as error:
-            print("Hatalı giriş! Örnek format: changeW(0,5,0.5)")
+            print("Hatalı giriş! Örnek format: changeW(0;5;0.5)")
             traceback.print_exc()
     elif (cmd.startswith("changeN(") and cmd.endswith(")")): 
         try:
-            args = cmd[8:-1].split(",")
+            args = cmd[8:-1].split(";")
             id, newValue = int(args[0]),float(args[1])
             get_neuron_by_id(id).value=newValue
 
         except Exception as error:
-            print("Hatalı giriş! Örnek format: changeN(0,0.1)")
+            print("Hatalı giriş! Örnek format: changeN(0;0.1)")
             traceback.print_exc()
     elif (cmd.startswith("getNeuronV(")and cmd.endswith(")")):
-        args = cmd[11:-1].split(",")
+        args = cmd[11:-1].split(";")
         for i in args:
             print(get_neuron_by_id(int(i)).calculate_weighted_sum(layers,connections))
                 
