@@ -532,17 +532,17 @@ def removeLayer(layers, connections, layer_idx):
 
 def removeNeuron(layers, connections, neuron_id):
     """
-    Belirtilen ID'ye sahip nöronu ve ilgili bağlantıları siler.
+    Belirtilen ID'ye sahip nöronu ve ilgili bağlantıları siler (Optimize edilmiş versiyon).
     
     :param layers: Nöron katmanları
     :param connections: Katmanlar arası bağlantılar
     :param neuron_id: Silinecek nöronun ID'si
     """
-    # Nöronu bul
+    # Nöronu bul (daha verimli arama)
     neuron = None
     layer_idx = -1
     for i, layer in enumerate(layers):
-        for j, n in enumerate(layer):
+        for n in layer:
             if n.id == neuron_id:
                 neuron = n
                 layer_idx = i
@@ -555,27 +555,39 @@ def removeNeuron(layers, connections, neuron_id):
         return
     
     # Nöronu katmandan sil
-    layers[layer_idx].remove(neuron)
+    try:
+        layers[layer_idx].remove(neuron)
+    except ValueError:
+        print(f"Hata: {neuron_id} ID'li nöron katmanda bulunamadı")
+        return
     
-    # Gelen bağlantıları sil (önceki katmandan)
+    # 1. Gelen bağlantıları sil (önceki katmandan)
     if layer_idx > 0:
-        for prev_neuron_id in connections[layer_idx-1]:
-            connections[layer_idx-1][prev_neuron_id] = [
-                conn for conn in connections[layer_idx-1][prev_neuron_id] 
+        # Anahtarları önce bir listeye al
+        prev_neuron_ids = list(connections[layer_idx-1].keys())
+        
+        for prev_neuron_id in prev_neuron_ids:
+            # Bağlantıları filtrele
+            filtered_conns = [
+                conn for conn in connections[layer_idx-1][prev_neuron_id]
                 if conn.connectedTo[1] != neuron_id
             ]
-            # Eğer boşsa, anahtarı da sil
-            if not connections[layer_idx-1][prev_neuron_id]:
+            
+            # Filtrelenmiş bağlantıları güncelle
+            if filtered_conns:
+                connections[layer_idx-1][prev_neuron_id] = filtered_conns
+            else:
+                # Boşsa anahtarı sil
                 del connections[layer_idx-1][prev_neuron_id]
     
-    # Giden bağlantıları sil (sonraki katmana)
-    if layer_idx < len(layers):
+    # 2. Giden bağlantıları sil (sonraki katmana)
+    # DÜZELTME: len(layers)-1 ile karşılaştır, çünkü connections sözlüğü katmanlar-1 eleman içerir
+    if layer_idx < len(layers)-1 and layer_idx in connections:
+        # DÜZELTME: neuron_id'nin bağlantılarını sil
         if neuron_id in connections[layer_idx]:
             del connections[layer_idx][neuron_id]
     
     print(f"Nöron {neuron_id} katman {layer_idx}'dan silindi ve bağlantılar kaldırıldı.")
-
-
 
 def add_neuron(layers, connections, layer_idx, new_neuron):
     """
@@ -1003,10 +1015,11 @@ class DynamicNetworkManager:
 
 
 
-def train_network(X_train, y_train, epochs=100):
+def train_network(X_train, y_train, epochs=None , intelligenceValue=0.32):
     dynamic_manager = DynamicNetworkManager(layers, connections)
-    
-    for epoch in range(epochs):
+    avg_error=999
+    epoch = 0
+    while avg_error > intelligenceValue:
         total_error = 0
         for X, y in zip(X_train, y_train):
             # İleri yayılım
@@ -1027,10 +1040,10 @@ def train_network(X_train, y_train, epochs=100):
         
         avg_error = total_error / len(X_train)
         print(f"Epoch {epoch+1}/{epochs}, Error: {avg_error:.4f}, Ağ Boyutu: {sum(len(l) for l in layers)} nöron")
-        
+        epoch +=1
         # Her 10 epoch'ta bir görselleştir
-        if epoch % 10 == 0:
-            visualize_network(layers, connections, refresh=True)
+        #if epoch % 10 == 0:
+            #visualize_network(layers, connections, refresh=True)
 
 """
 # Örnek veri
@@ -1216,12 +1229,14 @@ while True:
             traceback.print_exc()
             print("Hatalı komut formatı! Doğru kullanım:\ntrainFor(girişler;hedefler;lr;boost;momentum;max_grad)")
             
-    elif cmd == "trainFromFile()":
+    elif cmd.startswith("trainFromFile("):
         try:
-            x,y=modeltrainingprogram.read_csv_file("./ornek_veri.csv")
-            train_network(x,y)
+            params = cmd[len("trainFromFile("):-1].split(';')
+            x,y=modeltrainingprogram.read_csv_file(params[0])
+            train_network(x,y,intelligenceValue=float(params[1]))
             print(f"Eğitim tamamlandı. {len(x)} örnek işlendi.")
         except Exception as e:
+            traceback.print_exc()
             print(f"Dosya okuma hatası: {str(e)}")
             
     elif cmd.startswith("set_input"):
@@ -1244,7 +1259,7 @@ while True:
         print("- changeW(from;to;weight): Ağırlık değiştir")
         print("- changeN(id;value): Nöron değeri değiştir")
         print("- trainFor(inputs;targets;[lr]): Eğitim yap")
-        print("- trainFromFile(): Dosyadan eğitim yap")
+        print("- trainFromFile(path_to_csv;intelligenceValue): Dosyadan eğitim yap")
         print("- refresh(): Ağı yenile")
         print("- exit: Çıkış")
 
