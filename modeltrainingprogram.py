@@ -1,4 +1,5 @@
 import csv
+import random
 from typing import List, Tuple
 
 def read_csv_file(file_path: str) -> Tuple[List[List[float]], List[List[int]]]:
@@ -62,25 +63,41 @@ def write_csv_file(file_path: str, X_data: List[List[float]], y_data: List[List[
             row = inputs + targets
             writer.writerow(row)
 
+
+def generate_random_data(num_samples: int) -> Tuple[List[List[float]], List[List[int]]]:
+    """
+    Rastgele veri üretir
+    Args:
+        num_samples: Üretilecek örnek sayısı
+    Returns:
+        X_data: Giriş verileri (List[List[float]])
+        y_data: Hedef verileri (List[List[int]]) (one-hot encoded)
+    """
+    X_data = []
+    y_data = []
+    
+    for _ in range(num_samples):
+        # Rastgele 5 input değeri (0-1 arası, 2 ondalık basamaklı)
+        inputs = [round(random.uniform(0, 1), 2) for _ in range(5)]
+        
+        # Rastgele bir target seç (one-hot encoding)
+        target_class = random.randint(0, 2)
+        targets = [1 if i == target_class else 0 for i in range(3)]
+        
+        X_data.append(inputs)
+        y_data.append(targets)
+    
+    return X_data, y_data
+
+
 # Kullanım örneği
 if __name__ == "__main__":
-    # Örnek veri
-    X_train = [
-        [0.1, 0.9, 0.2,0.1,0.3],
-        [0.8, 0.3, 0.5,0.2,0.1],
-        [0.4, 0.7, 0.1,0.9,0.3],
-        [0.6, 0.2, 0.8,0.1,0.2]
-    ]
-    y_train = [
-        [1, 0, 0],
-        [0, 1, 0],
-        [0, 0, 1],
-        [1, 0, 0]
-    ]
-    
-    # CSV'ye yazma
-    write_csv_file('ornek_veri.csv', X_train, y_train)
-    print("CSV dosyası başarıyla oluşturuldu.")
+
+    # Veri üret
+    X, y = generate_random_data(100)
+
+# CSV'ye yaz
+    write_csv_file('random_data.csv', X, y)
     
     # CSV'den okuma
     X_loaded, y_loaded = read_csv_file('ornek_veri.csv')

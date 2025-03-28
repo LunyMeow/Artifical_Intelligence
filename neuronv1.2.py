@@ -83,11 +83,14 @@ visualizeNetwork =False
 randomMinWeight = -5.0
 randomMaxWeight = 5.0
 
+activation_types = ['sigmoid', 'tanh', 'relu']
+defaultNeuronActivationType='sigmoid'
+
 
 # Ağ Yapısı
-input_size = 5  # 28x28 piksel girişi
-hidden_size = 10  # Gizli katmanda 128 nöron
-output_size = 3  # 0-9 için 10 çıktı nöronu
+input_size = 28*28  # 28x28 piksel girişi
+hidden_size = 128  # Gizli katmanda 128 nöron
+output_size = 10  # 0-9 için 10 çıktı nöronu
 layers = [
     [Neuron(1) for i in range(input_size)],  # Giriş katmanı (784 nöron)
     [Neuron(1) for i in range(hidden_size)],  # Gizli katman (128 nöron)
@@ -530,15 +533,11 @@ def removeLayer(layers, connections, layer_idx):
     
     print(f"Katman {layer_idx} ve bağlantıları silindi. {len(deleted_layer)} nöron kaldırıldı.")
 
+
+
+
 def removeNeuron(layers, connections, neuron_id):
-    """
-    Belirtilen ID'ye sahip nöronu ve ilgili bağlantıları siler (Optimize edilmiş versiyon).
-    
-    :param layers: Nöron katmanları
-    :param connections: Katmanlar arası bağlantılar
-    :param neuron_id: Silinecek nöronun ID'si
-    """
-    # Nöronu bul (daha verimli arama)
+    # Nöronu bul
     neuron = None
     layer_idx = -1
     for i, layer in enumerate(layers):
@@ -547,130 +546,91 @@ def removeNeuron(layers, connections, neuron_id):
                 neuron = n
                 layer_idx = i
                 break
-        if neuron is not None:
+        if neuron:
             break
     
-    if neuron is None:
+    if not neuron:
         print(f"Hata: {neuron_id} ID'li nöron bulunamadı")
         return
     
     # Nöronu katmandan sil
-    try:
-        layers[layer_idx].remove(neuron)
-    except ValueError:
-        print(f"Hata: {neuron_id} ID'li nöron katmanda bulunamadı")
-        return
+    layers[layer_idx].remove(neuron)
     
-    # 1. Gelen bağlantıları sil (önceki katmandan)
+    # Gelen bağlantıları sil (önceki katmandan)
     if layer_idx > 0:
-        # Anahtarları önce bir listeye al
-        prev_neuron_ids = list(connections[layer_idx-1].keys())
-        
-        for prev_neuron_id in prev_neuron_ids:
-            # Bağlantıları filtrele
-            filtered_conns = [
-                conn for conn in connections[layer_idx-1][prev_neuron_id]
+        for prev_id in list(connections[layer_idx - 1].keys()):
+            connections[layer_idx - 1][prev_id] = [
+                conn for conn in connections[layer_idx - 1][prev_id] 
                 if conn.connectedTo[1] != neuron_id
             ]
-            
-            # Filtrelenmiş bağlantıları güncelle
-            if filtered_conns:
-                connections[layer_idx-1][prev_neuron_id] = filtered_conns
-            else:
-                # Boşsa anahtarı sil
-                del connections[layer_idx-1][prev_neuron_id]
+            if not connections[layer_idx - 1][prev_id]:
+                del connections[layer_idx - 1][prev_id]
     
-    # 2. Giden bağlantıları sil (sonraki katmana)
-    # DÜZELTME: len(layers)-1 ile karşılaştır, çünkü connections sözlüğü katmanlar-1 eleman içerir
-    if layer_idx < len(layers)-1 and layer_idx in connections:
-        # DÜZELTME: neuron_id'nin bağlantılarını sil
+    # Giden bağlantıları sil (sonraki katmana)
+    if layer_idx < len(layers) - 1 and layer_idx in connections:
         if neuron_id in connections[layer_idx]:
             del connections[layer_idx][neuron_id]
-    
-    print(f"Nöron {neuron_id} katman {layer_idx}'dan silindi ve bağlantılar kaldırıldı.")
+
+
 
 def add_neuron(layers, connections, layer_idx, new_neuron):
-    """
-    Yeni bir nöron ekler ve bu nöronu önceki ve sonraki katmandaki nöronlarla bağlar.
-
-    :param layers: Nöron katmanları
-    :param connections: Katmanlar arası bağlantılar
-    :param layer_idx: Yeni nöronun ekleneceği katman indeksi
-    :param new_neuron: Yeni eklenecek nöron (Neuron objesi)
-    """
-    # Yeni nöronu ilgili katmana ekle
     layers[layer_idx].append(new_neuron)
-
-    # Yeni nöronu, önceki katmandaki nöronlarla bağla
-    if layer_idx > 0:  # Katman var mı diye kontrol et
+    
+    # Önceki katmandan bağlantıları oluştur
+    if layer_idx > 0:
         for prev_neuron in layers[layer_idx - 1]:
-            conn = Connection(fromTo=[prev_neuron.id, new_neuron.id], weight=random.uniform(randomMinWeight, randomMaxWeight))
+            conn = Connection(fromTo=[prev_neuron.id, new_neuron.id], 
+                            weight=random.uniform(randomMinWeight, randomMaxWeight))
             if prev_neuron.id not in connections[layer_idx - 1]:
                 connections[layer_idx - 1][prev_neuron.id] = []
             connections[layer_idx - 1][prev_neuron.id].append(conn)
-
-    # Yeni nöronu, sonraki katmandaki nöronlarla bağla
-    if layer_idx < len(layers) - 1:  # Sonraki katman var mı diye kontrol et
+    
+    # Sonraki katmana bağlantıları oluştur
+    if layer_idx < len(layers) - 1:
         for next_neuron in layers[layer_idx + 1]:
-            conn = Connection(fromTo=[new_neuron.id, next_neuron.id], weight=random.uniform(randomMinWeight, randomMaxWeight))
+            conn = Connection(fromTo=[new_neuron.id, next_neuron.id], 
+                            weight=random.uniform(randomMinWeight, randomMaxWeight))
             if new_neuron.id not in connections[layer_idx]:
                 connections[layer_idx][new_neuron.id] = []
             connections[layer_idx][new_neuron.id].append(conn)
 
-    print(f"Nöron ID {new_neuron.id} katman {layer_idx} eklendi ve bağlantılar kuruldu.")
-    
-def addLayer(layers, connections, layerToAdd, neurons):
-    """
-    Yeni bir katman ekler ve bu katmandaki nöronları önceki ve sonraki katmanlarla bağlar.
 
-    :param layers: Nöron katmanları
-    :param connections: Katmanlar arası bağlantılar
-    :param layerToAdd: Yeni katmanın ekleneceği indeks
-    :param neurons: Yeni katmana eklenecek nöron listesi
 
-    # Mevcut ağa yeni bir gizli katman ekleme
-    new_neurons = [Neuron(1) for _ in range(15)]  # 15 nöronlu yeni katman
-    addLayer(layers, connections, 1, new_neurons)  # İndeks 1'e (giriş ve çıkış arasına) ekle
-    """
-    # Yeni katmanı ekle
-    layers.insert(layerToAdd, neurons)
+
+
+def addLayer(layers, connections, layer_idx, neurons):
+    layers.insert(layer_idx, neurons)
     
-    # Bağlantıları güncelle (yeni katman eklenince indeksler kaydı)
+    # Bağlantıları güncelle (indeks kaydırma)
     new_connections = {}
     for i in connections:
-        if i >= layerToAdd - 1:
+        if i >= layer_idx:
             new_connections[i + 1] = connections[i]
         else:
             new_connections[i] = connections[i]
     connections.clear()
     connections.update(new_connections)
     
-    # Yeni katman için bağlantıları oluştur
-    connections[layerToAdd - 1] = {}  # Önceki katmandan yeni katmana bağlantılar
-    connections[layerToAdd] = {}      # Yeni katmandan sonraki katmana bağlantılar
-    
-    # Önceki katmandan yeni katmana bağlantılar
-    if layerToAdd > 0:
-        for prev_neuron in layers[layerToAdd - 1]:
+    # Yeni bağlantıları oluştur
+    if layer_idx > 0:
+        connections[layer_idx - 1] = {}
+        for prev_neuron in layers[layer_idx - 1]:
             for new_neuron in neurons:
                 conn = Connection(fromTo=[prev_neuron.id, new_neuron.id], 
                                 weight=random.uniform(randomMinWeight, randomMaxWeight))
-                if prev_neuron.id not in connections[layerToAdd - 1]:
-                    connections[layerToAdd - 1][prev_neuron.id] = []
-                connections[layerToAdd - 1][prev_neuron.id].append(conn)
+                if prev_neuron.id not in connections[layer_idx - 1]:
+                    connections[layer_idx - 1][prev_neuron.id] = []
+                connections[layer_idx - 1][prev_neuron.id].append(conn)
     
-    # Yeni katmandan sonraki katmana bağlantılar
-    if layerToAdd < len(layers) - 1:
+    if layer_idx < len(layers) - 1:
+        connections[layer_idx] = {}
         for new_neuron in neurons:
-            for next_neuron in layers[layerToAdd + 1]:
+            for next_neuron in layers[layer_idx + 1]:
                 conn = Connection(fromTo=[new_neuron.id, next_neuron.id], 
                                 weight=random.uniform(randomMinWeight, randomMaxWeight))
-                if new_neuron.id not in connections[layerToAdd]:
-                    connections[layerToAdd][new_neuron.id] = []
-                connections[layerToAdd][new_neuron.id].append(conn)
-    
-    print(f"Yeni katman (indeks {layerToAdd}) eklendi ve bağlantılar kuruldu.")
-
+                if new_neuron.id not in connections[layer_idx]:
+                    connections[layer_idx][new_neuron.id] = []
+                connections[layer_idx][new_neuron.id].append(conn)
 
 
 
@@ -713,107 +673,164 @@ previous_updates = {}
 
 
 def TrainFor(inputValues, targetValues, connections, learning_rate=0.1, boost_factor=2.0, momentum=0.9, max_grad_norm=1.0):
-    """
-    Geliştirilmiş ve hata dayanıklı sinir ağı eğitim fonksiyonu
-    
-    Parametreler:
-    inputValues: Giriş verisi (ör. [0,0,0,0,0,0,1,0,0])
-    targetValues: Hedef çıktı (one-hot, ör. [1,0,0,0,0,0,0,0,0])
-    connections: Ağ bağlantıları
-    learning_rate: Temel öğrenme oranı (default: 0.1)
-    boost_factor: En etkili bağlantı güçlendirme (default: 2.0)
-    momentum: Momentum katsayısı (default: 0.9)
-    max_grad_norm: Gradyan kırpma değeri (default: 1.0)
-    """
     global previous_updates
     
     try:
-        # 1. İleri Yayılım
-        for i, value in enumerate(inputValues[:len(layers[0])]):  # Giriş boyutunu kontrol et
+        # 1. Girişleri normalize et ve çeşitlendir
+        inputValues = np.array(inputValues)
+        inputValues = (inputValues - np.min(inputValues)) / (np.max(inputValues) - np.min(inputValues) + 1e-8)
+        inputValues = inputValues * 0.8 + 0.1  # 0.1-0.9 aralığına getir
+        
+        # 2. İleri Yayılım
+        for i, value in enumerate(inputValues[:len(layers[0])]):
             layers[0][i].value = value
         
         runAI()
 
-        # 2. Hata Hesaplama
+        # 3. Hata ve Delta Hesaplama (GELİŞTİRİLMİŞ)
         output_layer = layers[-1]
         errors = []
-        for i, neuron in enumerate(output_layer):
-            if i < len(targetValues):  # Hedef boyutunu kontrol et
-                errors.append(targetValues[i] - neuron.value)
-            else:
-                errors.append(0)  # Varsayılan hata değeri
-
-        # 3. Geri Yayılım - Delta Hesaplama
         deltas = {}
-        for layer_idx in reversed(range(len(layers))):
-            layer = layers[layer_idx]
-            for neuron in layer:
-                if layer_idx == len(layers)-1:  # Çıkış katmanı
-                    if neuron.id < len(errors):  # ID kontrolü
-                        delta = errors[neuron.id] * neuron.activation_derivative()
-                    else:
-                        delta = 0
-                else:  # Gizli katmanlar
-                    delta_sum = 0
-                    if neuron.id in connections[layer_idx]:  # Bağlantı kontrolü
-                        for conn in connections[layer_idx][neuron.id]:
-                            if conn.connectedTo[1] in deltas:  # Delta kontrolü
-                                delta_sum += conn.weight * deltas[conn.connectedTo[1]]
-                    delta = delta_sum * neuron.activation_derivative()
+        
+        # Çıkış katmanı deltaları
+        for i, neuron in enumerate(output_layer[:len(targetValues)]):
+            error = targetValues[i] - neuron.value
+            errors.append(error)
+            
+            # Aktivasyon türevi için güvenli hesaplama
+            deriv = neuron.activation_derivative()
+            if np.isnan(deriv) or deriv < 1e-8:
+                deriv = 0.1  # Minimum türev değeri
+            
+            delta = error * deriv
+            deltas[neuron.id] = delta
+
+        # Gizli katman deltaları (geriye doğru)
+        for layer_idx in reversed(range(len(layers)-1)):
+            for neuron in layers[layer_idx]:
+                delta_sum = 0
+                
+                # Sonraki katmandaki tüm bağlantıları tarayarak delta toplamını hesapla
+                if neuron.id in connections[layer_idx]:
+                    for conn in connections[layer_idx][neuron.id]:
+                        to_id = conn.connectedTo[1]
+                        if to_id in deltas:
+                            delta_sum += conn.weight * deltas[to_id]
+                
+                # Aktivasyon türevi için güvenli hesaplama
+                deriv = neuron.activation_derivative()
+                if np.isnan(deriv) or deriv < 1e-8:
+                    deriv = 0.1  # Minimum türev değeri
+                
+                delta = delta_sum * deriv
+                
+                # Delta değerini makul bir aralıkta tut
+                if abs(delta) < 1e-8:
+                    delta = np.sign(delta) * 1e-8  # Çok küçük değerleri sınırla
+                elif abs(delta) > 1.0:
+                    delta = np.sign(delta) * 1.0  # Çok büyük değerleri sınırla
+                
                 deltas[neuron.id] = delta
 
-        # 4. Gradyan Kırpma
+        # 4. Gradyan Hesaplama (DEBUG ÖZELLİKLİ)
         all_gradients = []
+        grad_debug_info = []  # Hata ayıklama için
+        
         for layer_idx in range(len(layers)-1):
-            for src_id, conn_list in connections[layer_idx].items():
-                for conn in conn_list:
+            if layer_idx in connections:
+                for src_id, conn_list in connections[layer_idx].items():
                     src_neuron = get_neuron_by_id(src_id)
-                    if src_neuron and conn.connectedTo[1] in deltas:  # Null kontrolü
-                        grad = deltas[conn.connectedTo[1]] * src_neuron.value
-                        all_gradients.append(abs(grad))
-
-        if all_gradients:
-            grad_norm = max(all_gradients)
-            if grad_norm > max_grad_norm:
-                scale = max_grad_norm / grad_norm
-                for layer_idx in range(len(layers)-1):
-                    for src_id, conn_list in connections[layer_idx].items():
+                    if src_neuron:
                         for conn in conn_list:
-                            if conn.connectedTo[1] in deltas:
-                                deltas[conn.connectedTo[1]] *= scale
+                            to_id = conn.connectedTo[1]
+                            if to_id in deltas:
+                                grad = deltas[to_id] * src_neuron.value
+                                
+                                # Gradyanı kontrol et ve düzelt
+                                if np.isnan(grad) or np.isinf(grad):
+                                    grad = 0.01
+                                elif abs(grad) < 1e-8:
+                                    grad = np.sign(grad) * 1e-8
+                                
+                                all_gradients.append(abs(grad))
+                                
+                                # Hata ayıklama bilgisi topla
+                                grad_debug_info.append({
+                                    'from': src_id,
+                                    'to': to_id,
+                                    'grad': grad,
+                                    'delta': deltas[to_id],
+                                    'src_val': src_neuron.value,
+                                    'weight': conn.weight
+                                })
 
-        # 5. Ağırlık Güncelleme
+        # Gradyan çeşitliliğini kontrol et
+        if len(all_gradients) > 0:
+            max_grad = max(all_gradients)
+            min_grad = min(all_gradients)
+            avg_grad = np.mean(all_gradients)
+            
+            # Gradyanları normalize et (isteğe bağlı)
+            if max_grad > max_grad_norm:
+                scale_factor = max_grad_norm / max_grad
+                for neuron_id in deltas:
+                    deltas[neuron_id] *= scale_factor
+        else:
+            max_grad = 0.0
+            min_grad = 0.0
+            avg_grad = 0.0
+            print("UYARI: Hiç gradyan hesaplanamadı!")
+
+        # 5. Ağırlık Güncellemeleri (DEBUG ÖZELLİKLİ)
+        num_updates = 0
+        total_update = 0.0
+        
         for layer_idx in range(len(layers)-1):
-            layer_conns = connections[layer_idx]
-            for src_id, conn_list in layer_conns.items():
-                # En büyük gradyanı bul
-                max_grad = 0
-                max_conn = None
-                for conn in conn_list:
+            if layer_idx in connections:
+                for src_id, conn_list in connections[layer_idx].items():
                     src_neuron = get_neuron_by_id(src_id)
-                    if src_neuron and conn.connectedTo[1] in deltas:
-                        current_grad = deltas[conn.connectedTo[1]] * src_neuron.value
-                        if abs(current_grad) > abs(max_grad):
-                            max_grad = current_grad
-                            max_conn = conn
-                
-                # Tüm bağlantıları güncelle
-                for conn in conn_list:
-                    src_neuron = get_neuron_by_id(src_id)
-                    if src_neuron and conn.connectedTo[1] in deltas:
-                        grad = deltas[conn.connectedTo[1]] * src_neuron.value
-                        boost = boost_factor if conn == max_conn else 1.0
-                        update_id = id(conn)
-                        prev_update = previous_updates.get(update_id, 0)
-                        update = learning_rate * boost * grad + momentum * prev_update
-                        conn.weight += update
-                        previous_updates[update_id] = update
+                    if src_neuron:
+                        # En büyük gradyanı bul
+                        max_grad_in_layer = 0
+                        max_conn = None
+                        for conn in conn_list:
+                            to_id = conn.connectedTo[1]
+                            if to_id in deltas:
+                                current_grad = deltas[to_id] * src_neuron.value
+                                if abs(current_grad) > abs(max_grad_in_layer):
+                                    max_grad_in_layer = current_grad
+                                    max_conn = conn
+                        
+                        # Bağlantıları güncelle
+                        for conn in conn_list:
+                            to_id = conn.connectedTo[1]
+                            if to_id in deltas:
+                                grad = deltas[to_id] * src_neuron.value
+                                boost = boost_factor if conn == max_conn else 1.0
+                                update_id = id(conn)
+                                prev_update = previous_updates.get(update_id, 0)
+                                
+                                # Güncelleme değerini hesapla
+                                update = learning_rate * boost * grad + momentum * prev_update
+                                
+                                # Güncellemeyi uygula
+                                conn.weight += update
+                                previous_updates[update_id] = update
+                                
+                                num_updates += 1
+                                total_update += abs(update)
 
-        # 6. Performans Metrikleri
-        output_values = [neuron.value for neuron in layers[-1][:len(targetValues)]]  # Boyut kontrolü
+        # 6. Hata ve Debug Bilgileri
+        output_values = [neuron.value for neuron in layers[-1][:len(targetValues)]]
         current_error = hata_payi(targetValues[:len(output_values)], output_values)
-        print(f"Hata: {current_error:.6f} | LR: {learning_rate:.4f} | Max Grad: {max(all_gradients, default=0):.4f}")
-
+        
+        print("\n=== EĞİTİM ÖZETİ ===")
+        print(f"Hata: {current_error:.6f}")
+        print(f"LR: {learning_rate:.6f}")
+        print(f"Gradyanlar: Min {min_grad:.6f}, Max {max_grad:.6f}, Ort {avg_grad:.6f}")
+        print(f"Toplam Ağırlık Güncellemesi: {total_update:.6f} ({num_updates} bağlantı)")
+        
+       
     except Exception as e:
         print(f"Eğitim hatası: {str(e)}")
         traceback.print_exc()
@@ -841,26 +858,6 @@ def prepare_training_data(training_data):
         target[move] = 1 if reward > 0 else 0
         target_data.append(target)
     return np.array(input_data), np.array(target_data)
-
-def train_network(input_data, target_data, connections, learning_rate=0.1, epochs=10):
-    for epoch in range(epochs):
-        total_error = 0
-        for input_values, target_values in zip(input_data, target_data):
-            # Giriş değerlerini ayarla
-            for i in range(len(layers[0])):
-                layers[0][i].value = input_values[i]
-            
-            # İleri yayılım
-            runAI()
-            
-            # Geri yayılım
-            TrainFor(input_values, target_values, connections, learning_rate)
-            
-            # Hata hesapla
-            output = [neuron.value for neuron in layers[-1]]
-            total_error += np.sum((np.array(target_values) - np.array(output))**2)
-        
-        print(f"Epoch {epoch+1}/{epochs}, Error: {total_error/len(input_data):.4f}")
 
 
 
@@ -895,17 +892,40 @@ class DynamicNetworkManager:
             self._modify_architecture(avg_error)
             
     def _modify_architecture(self, avg_error):
-        """Ağ mimarisini değiştiren temel operasyonlar"""
-        # Rastgele bir değişiklik türü seç (0: nöron ekle, 1: katman ekle, 2: bağlantı değiştir)
-        action = random.choices([0, 1, 2, 3], weights=[0.4, 0.1, 0.4, 0.1])[0]
-        
+        """Ağ mimarisini avg_error'a göre akıllıca değiştiren operasyonlar"""
+
+        # Hata seviyesine göre ağırlıklandırılmış action seçimi
+        if avg_error > 0.5:  # Çok yüksek hata - agresif değişiklikler
+            action_weights = [0.3, 0.3, 0.2, 0.2]  # Nöron/katman ekleme ağırlıklı
+        elif avg_error > 0.2:  # Orta seviye hata - dengeli değişiklikler
+            action_weights = [0.4, 0.1, 0.4, 0.1]  # Orijinal ağırlıklar
+        else:  # Düşük hata - ince ayarlar
+            action_weights = [0.2, 0.0, 0.6, 0.2]  # Bağlantı optimizasyonu ağırlıklı
+
+        # Hatanın trendine göre ağırlıkları ayarla
+        if len(self.error_history) > 5:
+            last_errors = self.error_history[-5:]
+            trend = (last_errors[-1] - last_errors[0]) / 5  # Hata trendi
+
+            if trend > 0:  # Hata artıyorsa
+                action_weights = [x*1.5 for x in action_weights[:2]] + [x*0.7 for x in action_weights[2:]]  # Yapısal değişikliklere ağırlık ver
+            elif trend < -0.05:  # Hata belirgin şekilde azalıyorsa
+                action_weights = [x*0.7 for x in action_weights[:2]] + [x*1.3 for x in action_weights[2:]]  # İnce ayarlara ağırlık ver
+
+        # Normalize ağırlıklar (toplamı 1 yap)
+        total = sum(action_weights)
+        action_weights = [w/total for w in action_weights]
+
+        # Rastgele bir değişiklik türü seç
+        action = random.choices([0, 1, 2, 3], weights=action_weights)[0]
+
         if action == 0:  # Nöron ekle
             self._add_neuron_strategically()
         elif action == 1:  # Katman ekle
             self._add_layer_strategically()
         elif action == 2:  # Bağlantıları optimize et
             self._optimize_connections()
-        else:  # Nöron/kayman sil
+        else:  # Nöron/katman sil
             self._prune_network()
 
     def _add_neuron_strategically(self):
@@ -916,7 +936,7 @@ class DynamicNetworkManager:
         # Yeni nöron için aktivasyon tipini rastgele seç
         activation_types = ['sigmoid', 'tanh', 'relu']
         new_neuron = Neuron(default_value=0.0, 
-                          activation_type=random.choice(activation_types))
+                          activation_type=defaultNeuronActivationType)
         
         add_neuron(self.layers, self.connections, layer_idx, new_neuron)
         print(f"Adaptif nöron eklendi: Katman {layer_idx}, ID {new_neuron.id}")
@@ -937,27 +957,71 @@ class DynamicNetworkManager:
         print(f"Adaptif katman eklendi: Indeks {layer_idx+1}")
 
     def _optimize_connections(self):
-        """Bağlantı ağırlıklarını ve yapısını optimize eder"""
-        # En zayıf bağlantıları bul
+        """Bağlantı ağırlıklarını ve yapısını akıllıca optimize eder"""
         weak_connections = self._find_weak_connections(threshold=0.1)
-        
+
         for (layer_idx, from_id, conn) in weak_connections:
-            # %50 ihtimalle ya ağırlığını değiştir ya da bağlantıyı kaldır
-            if random.random() < 0.5:
-                # Ağırlığı resetle
-                conn.weight = random.uniform(randomMinWeight, randomMaxWeight)
-                print(f"Bağlantı resetlendi: {from_id}→{conn.connectedTo[1]}")
+            from_neuron = get_neuron_by_id(from_id)
+            to_neuron = get_neuron_by_id(conn.connectedTo[1])
+
+            # Bağlantının önemini hesapla (aktivasyon ve ağırlığın çarpımı)
+            connection_strength = abs(from_neuron.value * conn.weight)
+
+            # Katman bilgilerini al
+            current_layer_size = len(self.layers[layer_idx])
+            next_layer_size = len(self.layers[layer_idx+1])
+
+            # Silme kararı için kriterler
+            should_remove = (
+                connection_strength < 0.01 and  # Çok zayıf bağlantı
+                current_layer_size > 10 and     # Kaynak katman yeterince büyük
+                next_layer_size > 10 and        # Hedef katman yeterince büyük
+                random.random() < 0.3           #%30 ihtimalle silme
+            )
+
+            if should_remove:
+                # Bağlantıyı güvenli şekilde kaldır
+                self._safely_remove_connection(layer_idx, from_id, conn)
             else:
-                # Bağlantıyı tamamen kaldır
-                self.connections[layer_idx][from_id].remove(conn)
-                if not self.connections[layer_idx][from_id]:
+                # Ağırlığı akıllıca resetle
+                self._smart_reset_connection(conn, from_neuron, to_neuron)
+
+    def _safely_remove_connection(self, layer_idx, from_id, conn):
+        """Bağlantıyı güvenli şekilde kaldırır"""
+        try:
+            self.connections[layer_idx][from_id].remove(conn)
+            print(f"Bağlantı kaldırıldı: {from_id}→{conn.connectedTo[1]}")
+
+            # Eğer nöronun başka bağlantısı kalmadıysa
+            if not self.connections[layer_idx][from_id]:
+                # Giriş katmanında değilse ve çıkış katmanına bağlı değilse
+                if layer_idx > 0 and layer_idx < len(self.layers)-1:
                     del self.connections[layer_idx][from_id]
-                print(f"Bağlantı kaldırıldı: {from_id}→{conn.connectedTo[1]}")
+                    print(f"Nöron {from_id}'in tüm bağlantıları kaldırıldı")
+        except Exception as e:
+            print(f"Bağlantı kaldırma hatası: {str(e)}")
+
+    def _smart_reset_connection(self, conn, from_neuron, to_neuron):
+        """Ağırlığı akıllıca resetler"""
+        # Aktivasyonlara göre yeni ağırlık aralığı belirle
+        strength_factor = (abs(from_neuron.value) + abs(to_neuron.value)) / 2
+
+        if strength_factor < 0.1:  # Çok zayıf aktivasyon
+            new_weight = random.uniform(-0.5, 0.5)
+        elif strength_factor > 0.9:  # Çok güçlü aktivasyon
+            # Mevcut yönü koru ama büyüklüğü ayarla
+            sign = 1 if conn.weight > 0 else -1
+            new_weight = sign * random.uniform(0.5, 2.0)
+        else:  # Orta seviye
+            new_weight = random.uniform(-1.0, 1.0)
+
+        conn.weight = new_weight
+        print(f"Bağlantı güncellendi: {from_neuron.id}→{to_neuron.id} yeni ağırlık: {new_weight:.4f}")
 
     def _prune_network(self):
         """Az kullanılan nöronları ve katmanları temizler"""
         # En az aktif nöronları bul
-        inactive_neurons = self._find_inactive_neurons()
+        inactive_neurons = self._find_inactive_neurons(threshold=0.01)
         
         for neuron_id in inactive_neurons:
             removeNeuron(self.layers, self.connections, neuron_id)
@@ -1017,9 +1081,9 @@ class DynamicNetworkManager:
 
 def train_network(X_train, y_train, epochs=None , intelligenceValue=0.32):
     dynamic_manager = DynamicNetworkManager(layers, connections)
-    avg_error=999
-    epoch = 0
-    while avg_error > intelligenceValue:
+    #avg_error=999
+    #epoch = 0
+    for epoch in range(epochs):
         total_error = 0
         for X, y in zip(X_train, y_train):
             # İleri yayılım
@@ -1037,7 +1101,6 @@ def train_network(X_train, y_train, epochs=None , intelligenceValue=0.32):
             
             # Ağ yapısını adapte et
             dynamic_manager.adapt_network(error)
-        
         avg_error = total_error / len(X_train)
         print(f"Epoch {epoch+1}/{epochs}, Error: {avg_error:.4f}, Ağ Boyutu: {sum(len(l) for l in layers)} nöron")
         epoch +=1
@@ -1060,6 +1123,126 @@ def getOutput():
     return outputValues
 
 
+
+
+
+
+
+# Önceki import'ların yanına ekleyin
+import matplotlib.patches as patches
+from matplotlib.backend_bases import MouseButton
+
+# Global değişkenler
+drawing_mode = False
+drawing_canvas = None
+drawing_data = np.zeros((28, 28))  # 28x28'lik çizim alanı
+
+def toggle_drawing_mode(event):
+    global drawing_mode
+    drawing_mode = not drawing_mode
+    if drawing_mode:
+        print("Çizim modu aktif! Sol tıkla çiz, sağ tıkla temizle, 'p' ile tahmin et.")
+    else:
+        print("Çizim modu pasif.")
+
+def handle_drawing_click(event):
+    if not drawing_mode or event.inaxes != ax_drawing:
+        return
+    
+    if event.button == MouseButton.LEFT:
+        # Piksel koordinatlarını al
+        x, y = int(event.xdata), int(event.ydata)
+        
+        # 3x3 alanı boya (daha kalın çizgi için)
+        for i in range(-1, 2):
+            for j in range(-1, 2):
+                if 0 <= x+i < 28 and 0 <= y+j < 28:
+                    drawing_data[y+j, x+i] = min(1.0, drawing_data[y+j, x+i] + 0.3)  # Kademeli boyama
+        
+        update_drawing_display()
+    
+    elif event.button == MouseButton.RIGHT:
+        # Temizle
+        drawing_data.fill(0)
+        update_drawing_display()
+
+def handle_drawing_motion(event):
+    if not drawing_mode or event.button != MouseButton.LEFT or event.inaxes != ax_drawing:
+        return
+    
+    # Fare hareket ederken çizim yap
+    x, y = int(event.xdata), int(event.ydata)
+    for i in range(-1, 2):
+        for j in range(-1, 2):
+            if 0 <= x+i < 28 and 0 <= y+j < 28:
+                drawing_data[y+j, x+i] = min(1.0, drawing_data[y+j, x+i] + 0.3)
+    
+    update_drawing_display()
+
+def update_drawing_display():
+    global drawing_canvas
+    if drawing_canvas:
+        drawing_canvas.set_data(drawing_data)
+        plt.draw()
+
+def predict_drawing(event):
+    if not drawing_mode:
+        return
+    
+    # Çizimi ağa ver
+    flat_drawing = drawing_data.flatten()
+    for i in range(len(layers[0])):
+        layers[0][i].value = flat_drawing[i] if i < len(flat_drawing) else 0
+    
+    # Tahmin yap
+    runAI()
+    
+    # Sonuçları göster
+    output_layer = layers[-1]
+    predicted_digit = np.argmax([neuron.value for neuron in output_layer])
+    confidence = output_layer[predicted_digit].value * 100
+    
+    print(f"\nTahmin: {predicted_digit} (%{confidence:.2f} güven)")
+    print("Detaylı çıktılar:")
+    for i, neuron in enumerate(output_layer):
+        print(f"{i}: %{neuron.value*100:.2f}")
+
+# Çizim alanını oluştur
+def setup_drawing_area():
+    global ax_drawing, drawing_canvas
+    
+    fig = plt.figure(figsize=(10, 5))
+    ax_drawing = fig.add_subplot(121)
+    ax_drawing.set_title("Rakam Çiz (Sol tık: çiz, Sağ tık: temizle)")
+    ax_drawing.set_xticks([])
+    ax_drawing.set_yticks([])
+    
+    drawing_canvas = ax_drawing.imshow(drawing_data, cmap='gray_r', vmin=0, vmax=1)
+    
+    # Butonlar
+    ax_button = fig.add_subplot(222)
+    btn_toggle = Button(ax_button, 'Çizim Modu Aç/Kapat')
+    btn_toggle.on_clicked(toggle_drawing_mode)
+    
+    ax_predict = fig.add_subplot(224)
+    btn_predict = Button(ax_predict, 'Tahmin Et (p)')
+    btn_predict.on_clicked(predict_drawing)
+    
+    # Klavye ve fare olayları
+    fig.canvas.mpl_connect('button_press_event', handle_drawing_click)
+    fig.canvas.mpl_connect('motion_notify_event', handle_drawing_motion)
+    fig.canvas.mpl_connect('key_press_event', lambda e: predict_drawing(e) if e.key == 'p' else None)
+    
+    plt.tight_layout()
+    plt.show()
+
+
+
+
+
+
+
+
 # Terminal giriş döngüsü
 while True:
     if cmd == "exit":
@@ -1070,7 +1253,10 @@ while True:
         runAI()
         visualize_network(layers, connections, refresh=True)
         print(getOutput())
-        
+    # Komut satırına yeni komut ekleyin
+    elif cmd == "draw()":
+        setup_drawing_area()
+        cmd = ""  # Komut döngüsünü kesmemek için
     elif cmd == "visualize()":
         visualizeNetwork = not visualizeNetwork
         
@@ -1233,7 +1419,7 @@ while True:
         try:
             params = cmd[len("trainFromFile("):-1].split(';')
             x,y=modeltrainingprogram.read_csv_file(params[0])
-            train_network(x,y,intelligenceValue=float(params[1]))
+            train_network(x,y,epochs=int(params[1]))
             print(f"Eğitim tamamlandı. {len(x)} örnek işlendi.")
         except Exception as e:
             traceback.print_exc()
@@ -1259,7 +1445,7 @@ while True:
         print("- changeW(from;to;weight): Ağırlık değiştir")
         print("- changeN(id;value): Nöron değeri değiştir")
         print("- trainFor(inputs;targets;[lr]): Eğitim yap")
-        print("- trainFromFile(path_to_csv;intelligenceValue): Dosyadan eğitim yap")
+        print("- trainFromFile(path_to_csv;epochs): Dosyadan eğitim yap")
         print("- refresh(): Ağı yenile")
         print("- exit: Çıkış")
 
