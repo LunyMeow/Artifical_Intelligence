@@ -156,39 +156,11 @@ for conn in connections[0][0]:
 
 """
 
-def RandomInput(event):
-    for i in layers[0]:
-        i.value = random.uniform(0.1, 1)
-    for layer in layers[1:]:
-        for neuron in layer:
-            neuron.calculate_weighted_sum(layers, connections)
-    
-# Butonu yalnızca bir kez oluştur
-#ax_button = plt.axes([0.7, 0.05, 0.2, 0.075])  # [sol, alt, genişlik, yükseklik]
 
 
 
 
-def randomWeights(event,connections=connections, min_weight=-1.0, max_weight=1.0):
-    """
-    Tüm bağlantıların ağırlıklarını rastgele günceller.
-    
-    :param connections: Katmanlar arası bağlantılar (dict)
-    :param min_weight: Minimum ağırlık değeri
-    :param max_weight: Maksimum ağırlık değeri
-    """
-    for layer in connections.values():
-        for neuron_id, conn_list in layer.items():
-            for conn in conn_list:
-                conn.weight = random.uniform(min_weight, max_weight)
-                print(f"Güncellendi: {conn.connectedTo[0]} -> {conn.connectedTo[1]}, Yeni Weight: {conn.weight}")
 
-    
-def on_mouse_click(event):
-    if event.button == 1:  # Sol tıklama
-        RandomInput(event)
-    elif event.button == 3:  # Sağ tıklama
-        randomWeights(event)
 
 
 
@@ -453,16 +425,7 @@ def visualize_network(layers, connections, node_size=20,refresh=False):
 
 
 
-def isaret_koy(A, B, mesafe_orani):
-    # A ve B noktalarının koordinatlarını al
-    x1, y1 = A
-    x2, y2 = B
 
-    # Ok boyunca belirtilen mesafeye göre yeni noktanın koordinatlarını hesapla
-    x_isaret = x1 + (x2 - x1) * mesafe_orani
-    y_isaret = y1 + (y2 - y1) * mesafe_orani
-
-    return x_isaret, y_isaret
 
 
 def change_weight(connections, from_id, to_id, new_weight):
@@ -658,15 +621,6 @@ def hata_payi(target, output):
 
 
 
-def normalize_weights(connections):
-    all_weights = [conn.weight for layer_connections in connections.values() for conn_list in layer_connections.values() for conn in conn_list]
-    min_weight = min(all_weights)
-    max_weight = max(all_weights)
-    
-    for layer_connections in connections.values():
-        for neuron_id, conn_list in layer_connections.items():
-            for conn in conn_list:
-                conn.weight = 2 * ((conn.weight - min_weight) / (max_weight - min_weight)) - 1
 
 
 previous_updates = {}
@@ -836,28 +790,6 @@ def TrainFor(inputValues, targetValues, connections, learning_rate=0.1, boost_fa
         traceback.print_exc()
 
 
-
-def load_training_data(file_path):
-    training_data = []
-    with open(file_path, "r") as f:
-        reader = csv.reader(f)
-        next(reader)  # Başlık satırını atla
-        for row in reader:
-            state = list(map(int, row[0].split(',')))
-            move = int(row[1])
-            reward = int(row[2])
-            training_data.append((state, move, reward))
-    return training_data
-
-def prepare_training_data(training_data):
-    input_data = []
-    target_data = []
-    for state, move, reward in training_data:
-        input_data.append(state)
-        target = [0] * 9  # 9 olası hamle (0-8)
-        target[move] = 1 if reward > 0 else 0
-        target_data.append(target)
-    return np.array(input_data), np.array(target_data)
 
 
 
@@ -1079,11 +1011,20 @@ class DynamicNetworkManager:
 
 
 
-def train_network(X_train, y_train, epochs=None , intelligenceValue=0.32):
+def train_network(X_train, y_train, epochs=None, intelligenceValue=None):
     dynamic_manager = DynamicNetworkManager(layers, connections)
-    #avg_error=999
-    #epoch = 0
-    for epoch in range(epochs):
+    avg_error = float('inf')  # Başlangıçta sonsuz hata
+    epoch = 0
+    
+    while True:
+        # Eğer epochs belirtilmişse ve epoch sayısı aşıldıysa dur
+        if epochs is not None and epoch >= epochs:
+            break
+        # Eğer intelligenceValue belirtilmişse ve hata yeterince düştüyse dur
+        if intelligenceValue is not None and avg_error <= intelligenceValue:
+            print(f"\nHata {intelligenceValue} değerinin altına düştü! Eğitim durduruldu.")
+            break
+            
         total_error = 0
         for X, y in zip(X_train, y_train):
             # İleri yayılım
@@ -1101,12 +1042,16 @@ def train_network(X_train, y_train, epochs=None , intelligenceValue=0.32):
             
             # Ağ yapısını adapte et
             dynamic_manager.adapt_network(error)
+        
         avg_error = total_error / len(X_train)
-        print(f"Epoch {epoch+1}/{epochs}, Error: {avg_error:.4f}, Ağ Boyutu: {sum(len(l) for l in layers)} nöron")
-        epoch +=1
+        epoch += 1
+        print(f"Epoch {epoch}, Error: {avg_error:.4f}, Ağ Boyutu: {sum(len(l) for l in layers)} nöron")
+        
         # Her 10 epoch'ta bir görselleştir
-        #if epoch % 10 == 0:
-            #visualize_network(layers, connections, refresh=True)
+        if epoch % 10 == 0:
+            visualize_network(layers, connections, refresh=True)
+    
+    print(f"\nEğitim tamamlandı! Son Hata: {avg_error:.4f}")
 
 """
 # Örnek veri

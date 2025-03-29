@@ -88,4 +88,4 @@ def create_dataset(num_samples_per_digit=200, output_file='minst.csv'):
 
 if __name__ == "__main__":
     # 5000 örnek oluştur (her rakam için 500)
-    create_dataset(num_samples_per_digit=50)
+    create_dataset(num_samples_per_digit=2)
