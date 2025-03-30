@@ -19,6 +19,10 @@ from pyqtgraph.Qt import QtGui , QtCore  # Add this import
 from pyqtgraph.Qt import QtWidgets
 
 
+from sklearn.datasets import load_digits
+from sklearn.model_selection import train_test_split
+
+
 class Neuron:
     next_id = 0  # Global olarak artan ID değeri
     
@@ -1033,7 +1037,7 @@ class DynamicNetworkManager:
 
 
 
-def train_network(X_train, y_train, batch_size=256, epochs=None, intelligenceValue=None):
+def train_network(X_train, y_train, batch_size=256, epochs=None, intelligenceValue=None, learning_rate=0.1):
     dynamic_manager = DynamicNetworkManager(layers, connections)
     avg_error = float('inf')
     epoch = 0
@@ -1073,8 +1077,7 @@ def train_network(X_train, y_train, batch_size=256, epochs=None, intelligenceVal
                 batch_error += error
                 
                 # Geri yayılım
-                TrainFor(X, y, connections)
-                
+                TrainFor(X, y, connections, learning_rate=learning_rate)
                 # Ağ yapısını adapte et
                 if intelligenceValue is not None:
                     dynamic_manager.adapt_network(error, current_target=y, perfectValueArg=intelligenceValue)
@@ -1247,19 +1250,19 @@ def predict_drawing(event):
 
 def setup_drawing_area(dataset_type='mnist'):
     """Veri setine göre çizim alanını ayarlar"""
-    global ax_drawing, drawing_canvas, drawing_data, current_dataset
+    global ax_drawing, drawing_canvas, drawing_data, current_dataset, brush_size
     
     current_dataset = dataset_type
     
     # Veri setine göre boyutları ayarla
     if dataset_type == 'mnist':
-        drawing_data = np.zeros((28, 28))  # MNIST için 28x28
-        figsize = (10, 5)
+        drawing_data = np.zeros((28, 28))
+        brush_size = 3  # MNIST için orta boy fırça
     else:  # digits
-        drawing_data = np.zeros((8, 8))    # Digits için 8x8
-        figsize = (8, 4)
+        drawing_data = np.zeros((8, 8))
+        brush_size = 1  # Digits için küçük fırça
     
-    fig = plt.figure(figsize=figsize)
+    fig = plt.figure(figsize=(10, 5) if dataset_type == 'mnist' else (8, 4))
     ax_drawing = fig.add_subplot(121)
     ax_drawing.set_title(f"{dataset_type.upper()} Rakam Çiz (Sol tık: çiz, Sağ tık: temizle)")
     ax_drawing.set_xticks([])
@@ -1317,138 +1320,100 @@ def prepare_mnist_data(images_file, labels_file=None):
         y[np.arange(len(y_labels)), y_labels] = 1
         return X, y
     return X
-def train_mnist(images_file, labels_file, epochs=10):
+
+
+def train_mnist(images_file, labels_file, epochs=10, batch_size=256, learning_rate=0.1, test_size=0.2, intelligence=None):
     """MNIST veri setini eğitir"""
-    global current_dataset
+    global current_dataset, layers, connections
     current_dataset = 'mnist'
-    print("\n=== MNIST EĞİTİMİ BAŞLATILIYOR ===")
-    print(f"Hedef Epoch: {epochs}")
-    print("Veri seti yükleniyor...")
     
-    X_train, y_train = prepare_mnist_data(images_file, labels_file)
-    total_samples = len(X_train)
-    print(f"Yüklendi: {total_samples} örnek")
-    
-    # Ağ yapısını MNIST için optimize et
-    global layers, connections
+    # Ağ yapısını MNIST için ayarla
     layers = [
-        [Neuron(activation_type='sigmoid') for _ in range(784)],  # Giriş katmanı (28x28=784)
+        [Neuron(activation_type='sigmoid') for _ in range(784)],  # 28x28 = 784
         [Neuron(activation_type='relu') for _ in range(256)],     # Gizli katman
-        [Neuron(activation_type='sigmoid') for _ in range(10)]    # Çıkış katmanı (0-9)
+        [Neuron(activation_type='sigmoid') for _ in range(10)]    # Çıkış (0-9)
     ]
     
     # Bağlantıları yeniden oluştur
-    connections = {layer_idx: {} for layer_idx in range(len(layers) - 1)}
-    for layer_idx in range(len(layers) - 1):
+    connections = {layer_idx: {} for layer_idx in range(len(layers)-1)}
+    for layer_idx in range(len(layers)-1):
         for neuron in layers[layer_idx]:
-            for next_neuron in layers[layer_idx + 1]:
-                conn = Connection(fromTo=[neuron.id, next_neuron.id], 
-                                weight=random.uniform(-0.5, 0.5))  # Daha küçük başlangıç ağırlıkları
+            for next_neuron in layers[layer_idx+1]:
+                conn = Connection(
+                    fromTo=[neuron.id, next_neuron.id],
+                    weight=random.uniform(-1/np.sqrt(len(layers[layer_idx])), 
+                    1/np.sqrt(len(layers[layer_idx]))))
                 if neuron.id not in connections[layer_idx]:
                     connections[layer_idx][neuron.id] = []
                 connections[layer_idx][neuron.id].append(conn)
     
+    # Verileri yükle
+    X_train, y_train = prepare_mnist_data(images_file, labels_file)
+    
     # Eğitim
-    print("\nEğitim başlıyor...")
-    start_time = time.time()
-    train_network(X_train, y_train, epochs=epochs)
+    train_network(
+        X_train, y_train,
+        epochs=epochs,
+        batch_size=batch_size,
+        learning_rate=learning_rate,
+        intelligenceValue=intelligence
+    )
     
-    total_time = time.time() - start_time
-    print(f"\n=== MNIST EĞİTİMİ TAMAMLANDI ===")
-    #setup_drawing_area('mnist')
-    print(f"Toplam Süre: {total_time:.1f}s")
-    print(f"Epoch Başına Ortalama Süre: {total_time/epochs:.1f}s")
+    # Test
+    X_test, y_test = prepare_mnist_data(
+        't10k-images-idx3-ubyte.gz',
+        't10k-labels-idx1-ubyte.gz'
+    )
+    evaluate_network(X_test, y_test)
 
-def evaluate_mnist(images_file, labels_file):
-    """MNIST test setinde modeli değerlendirir"""
-    X_test, y_test = prepare_mnist_data(images_file, labels_file)
-    correct = 0
-    
-    for i in range(len(X_test)):
-        # Girişi ayarla
-        for j in range(len(layers[0])):
-            layers[0][j].value = X_test[i,j]
-        
-        runAI()
-        
-        # Tahmini al
-        outputs = [neuron.value for neuron in layers[-1]]
-        predicted = np.argmax(outputs)
-        actual = np.argmax(y_test[i])
-        
-        if predicted == actual:
-            correct += 1
-        
-        if i % 100 == 0:
-            print(f"Test {i}/{len(X_test)} - Doğruluk: {correct/(i+1):.2%}")
-    
-    print(f"Final Doğruluk: {correct/len(X_test):.2%}")
-
-# Kullanım örneği:
-# train_mnist('t10k-images-idx3-ubyte.gz', 't10k-labels-idx1-ubyte.gz', epochs=10)
-# evaluate_mnist('t10k-images-idx3-ubyte.gz', 't10k-labels-idx1-ubyte.gz')
-
-
-
-
-
-from sklearn.datasets import load_digits
-from sklearn.model_selection import train_test_split
-
-def train_digits(epochs=10, test_size=0.2):
-    """Sklearn digits veri seti ile eğitim yapar"""
-    global current_dataset
+def train_digits(epochs=10, batch_size=64, learning_rate=0.1, test_size=0.2, intelligence=None):
+    """Digits veri setini eğitir"""
+    global current_dataset, layers, connections
     current_dataset = 'digits'
-    print("\n=== SKLEARN DIGITS EĞİTİMİ BAŞLATILIYOR ===")
-    print(f"Hedef Epoch: {epochs}")
     
     # Veri setini yükle
     digits = load_digits()
-    X = digits.data
-    y = digits.target
+    X = digits.data / 16.0  # Normalize
+    y = np.zeros((len(digits.target), 10))
+    y[np.arange(len(digits.target)), digits.target] = 1  # One-hot encoding
     
-    # 0-1 aralığına normalize et
-    X = X / 16.0  # 16 maksimum piksel değeri olduğu için
+    # Train-test split
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=test_size)
     
-    # One-hot encoding yap
-    y_onehot = np.zeros((len(y), 10))
-    y_onehot[np.arange(len(y)), y] = 1
-    
-    # Eğitim ve test verilerini ayır
-    X_train, X_test, y_train, y_test = train_test_split(X, y_onehot, test_size=test_size)
-    
-    print(f"Yüklendi: {len(X_train)} eğitim, {len(X_test)} test örneği")
-    
-    # Ağ yapısını ayarla (8x8=64 giriş nöronu)
-    global layers, connections
-    input_size = 64  # 8x8 piksel
-    hidden_size = 32  # Daha küçük gizli katman
-    output_size = 10  # 10 çıktı (0-9)
-    
+    # Ağ yapısını Digits için ayarla (8x8=64)
     layers = [
-        [Neuron(activation_type='sigmoid') for _ in range(input_size)],  # Giriş katmanı
-        [Neuron(activation_type='relu') for _ in range(hidden_size)],     # Gizli katman
-        [Neuron(activation_type='sigmoid') for _ in range(output_size)]   # Çıkış katmanı
+        [Neuron(activation_type='sigmoid') for _ in range(64)],
+        [Neuron(activation_type='relu') for _ in range(32)],
+        [Neuron(activation_type='sigmoid') for _ in range(10)]
     ]
     
     # Bağlantıları yeniden oluştur
-    connections = {layer_idx: {} for layer_idx in range(len(layers) - 1)}
-    for layer_idx in range(len(layers) - 1):
+    connections = {layer_idx: {} for layer_idx in range(len(layers)-1)}
+    for layer_idx in range(len(layers)-1):
         for neuron in layers[layer_idx]:
-            for next_neuron in layers[layer_idx + 1]:
-                conn = Connection(fromTo=[neuron.id, next_neuron.id], 
-                                weight=random.uniform(-0.5, 0.5))
+            for next_neuron in layers[layer_idx+1]:
+                conn = Connection(
+                    fromTo=[neuron.id, next_neuron.id],
+                    weight=random.uniform(-1/np.sqrt(len(layers[layer_idx])), 
+                    1/np.sqrt(len(layers[layer_idx]))))
                 if neuron.id not in connections[layer_idx]:
                     connections[layer_idx][neuron.id] = []
                 connections[layer_idx][neuron.id].append(conn)
     
     # Eğitim
-    print("\nEğitim başlıyor...")
-    start_time = time.time()
-    train_network(X_train, y_train, epochs=epochs)
+    train_network(
+        X_train, y_train,
+        epochs=epochs,
+        batch_size=batch_size,
+        learning_rate=learning_rate,
+        intelligenceValue=intelligence
+    )
     
     # Test
-    print("\nTest başlıyor...")
+    evaluate_network(X_test, y_test)
+
+def evaluate_network(X_test, y_test):
+    """Modeli değerlendir"""
     correct = 0
     for i in range(len(X_test)):
         # Girişi ayarla
@@ -1457,8 +1422,8 @@ def train_digits(epochs=10, test_size=0.2):
         
         runAI()
         
-        # Tahmini al
-        outputs = [neuron.value for neuron in layers[-1]]
+        # Tahmin
+        outputs = [neuron.value for neuron in layers[-1][:len(y_test[i])]]
         predicted = np.argmax(outputs)
         actual = np.argmax(y_test[i])
         
@@ -1468,15 +1433,20 @@ def train_digits(epochs=10, test_size=0.2):
         if i % 50 == 0:
             print(f"Test {i}/{len(X_test)} - Doğruluk: {correct/(i+1):.2%}")
     
-    total_time = time.time() - start_time
-    print(f"\n=== EĞİTİM TAMAMLANDI ===")
-    #setup_drawing_area('digits')
-    print(f"Toplam Süre: {total_time:.1f}s")
-    print(f"Final Test Doğruluk: {correct/len(X_test):.2%}")
+    print(f"\nFinal Test Doğruluk: {correct/len(X_test):.2%}")
 
 
 
-# Terminal giriş döngüsü
+
+
+
+
+
+
+
+
+
+# Terminal giriş döngüsü - Dinamik versiyon
 while True:
     if cmd == "exit":
         break
@@ -1486,15 +1456,6 @@ while True:
         runAI()
         visualize_network(layers, connections, refresh=True)
         print(getOutput())
-    # Komut satırına yeni komut ekleyin
-    elif cmd == "draw()":
-        if current_dataset is None:
-            print("Önce bir veri seti ile eğitim yapın (trainFromMinst veya trainFromDigits)")
-        else:
-            setup_drawing_area(current_dataset)
-    elif cmd == "visualize()":
-        visualizeNetwork = not visualizeNetwork
-        
     elif cmd == "print_network()":
         # Ağ yapısını terminale yazdır
         print("\n=== AĞ YAPISI ===")
@@ -1510,7 +1471,7 @@ while True:
             for src_id, conn_list in connections[layer_idx].items():
                 for conn in conn_list:
                     print(f"  {src_id} → {conn.connectedTo[1]} | Ağırlık: {conn.weight:.4f}")
-
+    
     elif cmd.startswith("get_connection("):
         try:
             args = cmd[15:-1].split(",")
@@ -1533,6 +1494,154 @@ while True:
         except Exception as error:
             print("Hatalı giriş! Örnek format: get_connection(5,10)")
             traceback.print_exc()
+
+    
+    elif cmd == "draw()":
+        if current_dataset is None:
+            print("Önce bir veri seti ile eğitim yapın (train_mnist veya train_digits)")
+        else:
+            setup_drawing_area(current_dataset)
+    
+    elif cmd == "visualize()":
+        visualizeNetwork = not visualizeNetwork
+        print(f"Görselleştirme {'aktif' if visualizeNetwork else 'pasif'}")
+
+    elif cmd.startswith("train_mnist("):
+        try:
+            # Parametreleri ayrıştır (varsayılan değerlerle)
+            params = cmd[len("train_mnist("):-1].split(";")
+            
+            # Varsayılan değerler
+            epochs = 10
+            batch_size = 256
+            learning_rate = 0.1
+            test_size = 0.2
+            intelligence = None
+            
+            # Kullanıcı parametrelerini al
+            if len(params) > 0 and params[0].strip(): epochs = int(params[0])
+            if len(params) > 1 and params[1].strip(): batch_size = int(params[1])
+            if len(params) > 2 and params[2].strip(): learning_rate = float(params[2])
+            if len(params) > 3 and params[3].strip(): test_size = float(params[3])
+            if len(params) > 4 and params[4].strip(): intelligence = float(params[4])
+            
+            print(f"\nMNIST Eğitim Parametreleri:")
+            print(f"- Epochs: {epochs}")
+            print(f"- Batch Size: {batch_size}")
+            print(f"- Learning Rate: {learning_rate}")
+            print(f"- Test Size: {test_size}")
+            print(f"- Intelligence Threshold: {intelligence if intelligence is not None else 'Kapalı'}")
+            
+            train_mnist(
+                'train-images-idx3-ubyte.gz',
+                'train-labels-idx1-ubyte.gz',
+                epochs=epochs,
+                batch_size=batch_size,
+                learning_rate=learning_rate,
+                test_size=test_size,
+                intelligence=intelligence
+            )
+            
+        except Exception as e:
+            print("Hatalı komut formatı! Örnek kullanımlar:")
+            print("train_mnist()  # Tüm varsayılan değerlerle")
+            print("train_mnist(5)  # Sadece epoch belirterek")
+            print("train_mnist(10;128;0.05;0.1;0.01)  # Tüm parametrelerle")
+            print("Parametre sırası: epochs;batch_size;learning_rate;test_size;intelligence")
+            traceback.print_exc()
+
+    elif cmd.startswith("train_digits("):
+        try:
+            # Parametreleri ayrıştır (varsayılan değerlerle)
+            params = cmd[len("train_digits("):-1].split(";")
+            
+            # Varsayılan değerler
+            epochs = 10
+            batch_size = 64
+            learning_rate = 0.1
+            test_size = 0.2
+            intelligence = None
+            
+            # Kullanıcı parametrelerini al
+            if len(params) > 0 and params[0].strip(): epochs = int(params[0])
+            if len(params) > 1 and params[1].strip(): batch_size = int(params[1])
+            if len(params) > 2 and params[2].strip(): learning_rate = float(params[2])
+            if len(params) > 3 and params[3].strip(): test_size = float(params[3])
+            if len(params) > 4 and params[4].strip(): intelligence = float(params[4])
+            
+            print(f"\nDigits Eğitim Parametreleri:")
+            print(f"- Epochs: {epochs}")
+            print(f"- Batch Size: {batch_size}")
+            print(f"- Learning Rate: {learning_rate}")
+            print(f"- Test Size: {test_size}")
+            print(f"- Intelligence Threshold: {intelligence if intelligence is not None else 'Kapalı'}")
+            
+            train_digits(
+                epochs=epochs,
+                batch_size=batch_size,
+                learning_rate=learning_rate,
+                test_size=test_size,
+                intelligence=intelligence
+            )
+            
+        except Exception as e:
+            print("Hatalı komut formatı! Örnek kullanımlar:")
+            print("train_digits()  # Tüm varsayılan değerlerle")
+            print("train_digits(20)  # Sadece epoch belirterek")
+            print("train_digits(15;32;0.01;0.3;0.005)  # Tüm parametrelerle")
+            print("Parametre sırası: epochs;batch_size;learning_rate;test_size;intelligence")
+            traceback.print_exc()
+
+    elif cmd.startswith("train_custom("):
+        try:
+            # Parametreleri ayrıştır (dosya yolu zorunlu)
+            params = cmd[len("train_custom("):-1].split(";")
+            
+            if len(params) < 1 or not params[0].strip():
+                raise ValueError("Dosya yolu gereklidir")
+            
+            file_path = params[0].strip()
+            
+            # Varsayılan değerler
+            epochs = 10
+            batch_size = 128
+            learning_rate = 0.1
+            test_size = 0.2
+            intelligence = None
+            
+            # Kullanıcı parametrelerini al
+            if len(params) > 1 and params[1].strip(): epochs = int(params[1])
+            if len(params) > 2 and params[2].strip(): batch_size = int(params[2])
+            if len(params) > 3 and params[3].strip(): learning_rate = float(params[3])
+            if len(params) > 4 and params[4].strip(): test_size = float(params[4])
+            if len(params) > 5 and params[5].strip(): intelligence = float(params[5])
+            
+            print(f"\nÖzel Veri Seti Eğitim Parametreleri:")
+            print(f"- Dosya: {file_path}")
+            print(f"- Epochs: {epochs}")
+            print(f"- Batch Size: {batch_size}")
+            print(f"- Learning Rate: {learning_rate}")
+            print(f"- Test Size: {test_size}")
+            print(f"- Intelligence Threshold: {intelligence if intelligence is not None else 'Kapalı'}")
+            
+            X, y = modeltrainingprogram.read_csv_file(file_path)
+            train_network(
+                X, y,
+                epochs=epochs,
+                batch_size=batch_size,
+                learning_rate=learning_rate,
+                test_size=test_size,
+                intelligenceValue=intelligence
+            )
+            
+        except Exception as e:
+            print("Hatalı komut formatı! Örnek kullanımlar:")
+            print("train_custom('veri.csv')  # Sadece dosya yolu")
+            print("train_custom('veri.csv';5)  # Dosya yolu ve epoch")
+            print("train_custom('veri.csv';10;64;0.05;0.1;0.01)  # Tüm parametreler")
+            print("Parametre sırası: file_path;epochs;batch_size;learning_rate;test_size;intelligence")
+            traceback.print_exc()
+
 
     elif cmd.startswith("add_neuron("):
         try:
@@ -1614,84 +1723,80 @@ while True:
         except Exception as error:
             print("Hatalı giriş! Örnek format: changeN(0;0.1)")
             traceback.print_exc()
-            
-    elif (cmd.startswith("getNeuronV(")and cmd.endswith(")")):
-        args = cmd[11:-1].split(";")
-        for i in args:
-            neuron_id = int(i)
-            neuron = get_neuron_by_id(neuron_id)
-            if neuron:
-                print(f"Nöron {neuron_id} Değer: {neuron.value:.4f} | Ağırlıklı Toplam: {neuron.weightedSum:.4f}")
-                
-    elif (cmd.startswith("changeInputRandomly(")and cmd.endswith(")")):
-        for i in layers[0]:
-            i.value=random.uniform(0.1, 1)
-        print("Giriş katmanı rastgele değerlerle güncellendi")
-        
-    elif cmd.startswith("trainFor(") and cmd.endswith(")"):
-        try:
-            params = cmd[len("trainFor("):-1].split(';')
-            input_values = list(map(float, params[0].split(',')))
-            target_values = list(map(float, params[1].split(',')))
+    
 
-            lr = float(params[2]) if len(params) > 2 else 0.1
-            boost = float(params[3]) if len(params) > 3 else 2.0
-            momentum_val = float(params[4]) if len(params) > 4 else 0.9
-            max_grad = float(params[5]) if len(params) > 5 else 1.0
-
-            TrainFor(input_values, target_values, connections,
-                    learning_rate=lr,
-                    boost_factor=boost,
-                    momentum=momentum_val,
-                    max_grad_norm=max_grad)
-            cmd = "refresh()"
-            continue
-        except Exception as e:
-            traceback.print_exc()
-            print("Hatalı komut formatı! Doğru kullanım:\ntrainFor(girişler;hedefler;lr;boost;momentum;max_grad)")
-            
-    elif cmd.startswith("trainFromFile("):
-        try:
-            params = cmd[len("trainFromFile("):-1].split(';')
-            x,y=modeltrainingprogram.read_csv_file(params[0])
-            train_network(x,y,epochs=int(params[1]))
-            print(f"Eğitim tamamlandı. {len(x)} örnek işlendi.")
-        except Exception as e:
-            traceback.print_exc()
-            print(f"Dosya okuma hatası: {str(e)}")
-    elif cmd=="trainFromMinst()":
-        train_mnist('t10k-images-idx3-ubyte.gz', 't10k-labels-idx1-ubyte.gz', epochs=1)
-        evaluate_mnist('t10k-images-idx3-ubyte.gz', 't10k-labels-idx1-ubyte.gz')
-    elif cmd.startswith("trainFromDigits("):
-        try:
-            epochs = int(cmd[len("trainFromDigits("):-1])
-            train_digits(epochs=epochs)
-        except Exception as e:
-            print(f"Hata: {e}")
     elif cmd.startswith("set_input"):
         try:
-            values = list(map(float, cmd.split()[1:]))
+            # Komuttan değerleri ayır
+            parts = cmd.split()
+
+            if len(parts) < 2:
+                print("Hata: Değerler gerekiyor. Örnek: set_input 0.1 0.5 0.9")
+                print("Veya: set_input random (rastgele değerler için)")
+                print("Veya: set_input zeros (sıfırlarla doldurmak için)")
+                print("Veya: set_input ones (birlerle doldurmak için)")
+                raise ValueError("Eksik parametre")
+
+            # Özel durumlar için kontrol
+            if parts[1] == "random":
+                values = [random.uniform(0.1, 1.0) for _ in range(len(layers[0]))]
+                print(f"Giriş katmanı rastgele değerlerle güncellendi (0.1-1.0 aralığı)")
+            elif parts[1] == "zeros":
+                values = [0.0 for _ in range(len(layers[0]))]
+                print("Giriş katmanı sıfırlarla sıfırlandı")
+            elif parts[1] == "ones":
+                values = [1.0 for _ in range(len(layers[0]))]
+                print("Giriş katmanı birlerle dolduruldu")
+            else:
+                # Normal değer atama
+                values = list(map(float, parts[1:]))
+                if len(values) > len(layers[0]):
+                    print(f"Uyarı: {len(values)} değer verildi ama sadece ilk {len(layers[0])} tanesi kullanılacak")
+
+            # Değerleri giriş katmanına ata
             for i, val in enumerate(values[:len(layers[0])]):
                 layers[0][i].value = val
-            print(f"Giriş katmanı güncellendi: {values}")
+
+            # Güncellenen değerleri göster
+            print("\nGiriş Katmanı Değerleri:")
+            for i in range(0, min(10, len(layers[0]))):  # İlk 10 değeri göster
+                print(f"Nöron {i}: {layers[0][i].value:.4f}")
+            if len(layers[0]) > 10:
+                print(f"... (toplam {len(layers[0])} nöron)")
+
+            # İstatistikler
+            print(f"\nİstatistikler:")
+            print(f"- Min: {min(values[:len(layers[0])]):.4f}")
+            print(f"- Max: {max(values[:len(layers[0])]):.4f}")
+            print(f"- Ortalama: {np.mean(values[:len(layers[0])]):.4f}")
+
         except Exception as e:
-            print(f"Hata: {e}")
-            
+            print(f"Hata: {str(e)}")
+            print("Doğru kullanım örnekleri:")
+            print("- set_input 0.1 0.5 0.9 (belirli değerler atamak için)")
+            print("- set_input random (rastgele değerler atamak için)")
+            print("- set_input zeros (tüm girişleri sıfırlamak için)")
+            print("- set_input ones (tüm girişleri 1 yapmak için)")
+    
+    # ... (diğer komutlar aynı şekilde kalabilir)
+
     else:
-        print("\nGeçerli komutlar:")
+        print("\nKullanılabilir Komutlar:")
+        print("- refresh(): Ağı yenile")
         print("- print_network(): Ağ yapısını terminalde göster")
         print("- get_connection(from_id,to_id): Bağlantı ağırlığını göster")
+        print("- draw(): Çizim modunu aç")
         print("- add_neuron(layer_idx,value): Yeni nöron ekle")
         print("- removeNeuron(id): Nöron sil")
         print("- addLayer(index;[nöronlar]): Katman ekle")
         print("- removeLayer(index): Katman sil")
         print("- changeW(from;to;weight): Ağırlık değiştir")
         print("- changeN(id;value): Nöron değeri değiştir")
-        print("- trainFor(inputs;targets;[lr]): Eğitim yap")
-        print("- trainFromFile(path_to_csv;epochs): Dosyadan eğitim yap")
-        print("- refresh(): Ağı yenile")
-        print("- exit: Çıkış")
-        print("- trainFromMinst(): Minst verisinden eğitim")
-        print("- trainFromDigits(epochs): SKalern verisinden eğitim")
+        print("- visualize(): Ağ görselleştirmeyi aç/kapat")
+        print("- train_mnist([epochs;batch;lr;test_size;intel]): MNIST ile eğitim")
+        print("- train_digits([epochs;batch;lr;test_size;intel]): Digits ile eğitim")
+        print("- train_custom(dosya.csv[;epochs;batch;lr;test_size;intel]): Özel veri ile eğitim")
+        print("- set_input values:giriş değerlerini belirle")
+        print("- exit: Programdan çık")
 
     cmd = input("\nKomut girin: ")
