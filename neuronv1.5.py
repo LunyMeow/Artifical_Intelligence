@@ -60,27 +60,32 @@ class Neuron:
 
     def calculate_weighted_sum(self, layers, connections):
         weighted_sum = 0
+        bias_sum = 0  # Bias toplamı
+        
         for layer_idx in range(len(layers) - 1):
             for prev_neuron in layers[layer_idx]:
                 for conn in connections[layer_idx].get(prev_neuron.id, []):
                     if conn.connectedTo[1] == self.id:
                         weighted_sum += prev_neuron.value * conn.weight
-        self.weightedSum = weighted_sum
-        self.value = self.activation(weighted_sum)  # Aktivasyon fonksiyonunu uygula
-        self.output = self.value  # Çıkışı güncelle
+                        bias_sum += conn.bias  # Bağlantı bias'larını topla
+        
+        self.weightedSum = weighted_sum + bias_sum  # Bias'ı ekle
+        self.value = self.activation(self.weightedSum)
+        self.output = self.value
         return self.value
 
 
 
 
-
 class Connection:
-    def __init__(self, weight=0, fromTo=[0, 0]):
+    def __init__(self, weight=0, fromTo=[0, 0], bias=0.1):  # Varsayılan bias=0.1
         self.weight = weight
         self.connectedTo = fromTo
+        self.bias = bias  # Bias parametresi eklendi
     
     def update_weight(self, learning_rate, delta):
-        self.weight = learning_rate * delta
+        self.weight += learning_rate * delta
+        self.bias += learning_rate * delta * 0.1  # Bias da güncelleniyor
 
 
 
@@ -95,28 +100,55 @@ activation_types = ['sigmoid', 'tanh', 'relu']
 defaultNeuronActivationType='relu'
 
 
+
+
 # Ağ Yapısı
 input_size = 2  # 28x28 piksel girişi
 hidden_size = 4  # Gizli katmanda 128 nöron
 output_size = 1  # 0-9 için 10 çıktı nöronu
-layers = [
-    [Neuron(1) for i in range(input_size)],  # Giriş katmanı 
-    [Neuron(1) for i in range(hidden_size)],  # Gizli katman 
-    [Neuron(1) for i in range(output_size)]   # Çıkış katmanı 
-]
+
+# Önce boş bir layers listesi oluştur
+layers = []
+
+
 
 # Bağlantıları oluşturma
-connections = {layer_idx: {} for layer_idx in range(len(layers) - 1)}
 
-for layer_idx in range(len(layers) - 1):
-    for neuron in layers[layer_idx]:
-        for next_neuron in layers[layer_idx + 1]:
-            conn = Connection(fromTo=[neuron.id, next_neuron.id], # Bağlantıları oluştururken daha akıllı ilkleme yapın
-weight = random.uniform(-1/np.sqrt(len(layers[layer_idx])), 
-                      1/np.sqrt(len(layers[layer_idx])))) #weight=random.uniform(randomMinWeight, randomMaxWeight)
-            if neuron.id not in connections[layer_idx]:
-                connections[layer_idx][neuron.id] = []
-            connections[layer_idx][neuron.id].append(conn)
+connections = {}
+def setConnections():
+    global layers,connections
+    connections.clear()
+    connections = {layer_idx: {} for layer_idx in range(len(layers) - 1)}
+    for layer_idx in range(len(layers) - 1):
+        for neuron in layers[layer_idx]:
+            for next_neuron in layers[layer_idx + 1]:
+                conn = Connection(fromTo=[neuron.id, next_neuron.id], # Bağlantıları oluştururken daha akıllı ilkleme yapın
+    weight = random.uniform(-1/np.sqrt(len(layers[layer_idx])), 
+                          1/np.sqrt(len(layers[layer_idx])))) #weight=random.uniform(randomMinWeight, randomMaxWeight)
+                if neuron.id not in connections[layer_idx]:
+                    connections[layer_idx][neuron.id] = []
+                connections[layer_idx][neuron.id].append(conn)
+
+def setLayers(*neuronInLayers):
+    """Katmanları ve nöron sayılarını ayarlar"""
+    global layers  # Global layers listesini kullanacağımızı belirtiyoruz
+    layers.clear()  # Önceki katmanları temizle
+    
+    for neuronCount in neuronInLayers:
+        # Her katman için yeni nöron listesi oluştur
+        layer = [Neuron(1) for _ in range(neuronCount)]
+        layers.append(layer)
+    
+    setConnections()
+
+setLayers(2, 4, 1)  # 2 giriş, 4 gizli, 1 çıkış nöronu
+
+
+# Kullanım örneği:
+
+
+
+
 
 """
 {
@@ -925,17 +957,16 @@ def calculate_neuron_delta(neuron, target_value):
     target = 0.8  # Beklenen çıktı
     delta = calculate_neuron_delta(output_neuron, target)"""
 
-def calculate_weight_update(neuron, connection,target, learning_rate=1):
-    """Ağırlık güncelleme miktarını hesaplar"""
+def calculate_weight_update(neuron, connection, target, learning_rate=1):
     delta = calculate_neuron_delta(neuron, target)
     from_neuron = get_neuron_by_id(connection.connectedTo[0])
-    return learning_rate * delta * from_neuron.value
+    
+    # Ağırlık ve bias güncellemesi
+    weight_update = learning_rate * delta * from_neuron.value
+    bias_update = learning_rate * delta * 0.1  # Bias için daha küçük adım
+    
+    return weight_update, bias_update  # Artık tuple döndürüyor
 
-    """# Gelen bağlantıları analiz et
-    for conn in get_neuron_connections(output_neuron.id, incoming=True, outgoing=False):
-        weight_update = calculate_weight_update(output_neuron, conn)
-        print(f"Bağlantı {conn[0]}->{conn[1]} için güncelleme: {weight_update:.6f}")
-    """
 
 def diagnose_connection(neuron, connection,target, threshold=0.5):
     """Bağlantı sorunlarını teşhis eder"""
@@ -1006,6 +1037,15 @@ def update_hidden_weights(layer_idx,target, learning_rate=0.01):
 def adapt_network(currentError, target: list, perfectValue=0.3,learning_rateArg = 1):
     error = hata_payi(target, runAI())
     print(f"Hata değeri: {error}")
+    # Add these at the beginning
+    MAX_WEIGHT = 10.0
+    GRADIENT_CLIP = 1.0
+
+    def normalize_weight(w):
+        return max(-MAX_WEIGHT, min(MAX_WEIGHT, w))
+    
+    def clip_gradient(g):
+        return max(-GRADIENT_CLIP, min(GRADIENT_CLIP, g))
 
     for layer_idx, layer in enumerate(layers[::-1]):  # Katmanları ters sırada dolaş (çıkıştan girişe)
         current_layer_idx = len(layers) - 1 - layer_idx  # Gerçek katman indeksi
@@ -1043,17 +1083,28 @@ def adapt_network(currentError, target: list, perfectValue=0.3,learning_rateArg 
                     delta = calculate_neuron_delta(neuron, target_value)
 
                     if to_id == neuron.id:  # Gelen bağlantı ise
-                        weight_update = calculate_weight_update(neuron, conn, target_value)
+                        # Modify weight update sections like this:
+                        weight_update, bias_update = calculate_weight_update(neuron, conn, target_value)
+                        weight_update = clip_gradient(weight_update * learning_rateArg)  # Apply learning rate and clip
+                        new_weight = normalize_weight(conn.weight + weight_update)
+
+
                         diagnose = diagnose_connection(neuron, conn, target_value)
 
+                        # Add debugging
+                        if abs(new_weight) > 100:  # Still large but more reasonable
+                            print(f"Large weight update: {conn.weight} -> {new_weight}")
+
                         if "aşırı" in diagnose.lower():
-                            conn.weight *= 0.5  # Now modifying the Connection object's weight directly
+                            
                             print(f"  ! AŞIRI DEĞER DÜZELTME: {weight:.6f} -> {conn.weight:.6f}")
                         elif "zayıf" in diagnose.lower():
-                            conn.weight *= 1.5  # Now modifying the Connection object's weight directly
+                            
                             print(f"  ! ZAYIF BAĞLANTI GÜÇLENDİRME: {weight:.6f} -> {conn.weight:.6f}")
-                        else:
-                            conn.weight += weight_update  # Now modifying the Connection object's weight directly
+                        conn.weight = normalize_weight(conn.weight + weight_update)
+                        conn.bias = normalize_weight(conn.bias + bias_update)
+                            
+                        
                 else:
                     # GİZLİ KATMANLAR için işlemler
                     if to_id == neuron.id:  # Gelen bağlantı ise
@@ -1185,10 +1236,27 @@ y_train = [[1,0,0], [0,1,0], ...]
 train_network(X_train, y_train, epochs=100)"""
 
 def getOutput():
-    outputValues=[]
-    for neuronOnLastLayer in layers[-1]:
-        outputValues.append(str(neuronOnLastLayer.value) + " " + str(neuronOnLastLayer.weightedSum))
-    return outputValues
+    output_values = []
+    max_value = -1
+    max_index = -1
+    
+    # Tüm çıktı nöronlarını işle
+    for i, neuron in enumerate(layers[-1]):
+        value = neuron.value
+        weighted_sum = neuron.weightedSum
+        
+        # En yüksek aktivasyonu takip et
+        if value > max_value:
+            max_value = value
+            max_index = i
+        
+        output_values.append(f"Nöron {i}: Değer={value:.8f}, AğırlıklıToplam={weighted_sum:.4f}")
+    
+    # En yüksek aktivasyon bilgisini ekle
+    if max_index != -1:
+        output_values.append(f"\nSONUÇ: {max_index} (Olasılık: {max_value*100:.2f}%)")
+    
+    return output_values
 
 
 
@@ -1384,25 +1452,8 @@ def train_mnist(images_file, labels_file, epochs=10, batch_size=256, learning_ra
     global current_dataset, layers, connections
     current_dataset = 'mnist'
     
-    # Ağ yapısını MNIST için ayarla
-    layers = [
-        [Neuron(activation_type='sigmoid') for _ in range(784)],  # 28x28 = 784
-        [Neuron(activation_type='relu') for _ in range(256)],     # Gizli katman
-        [Neuron(activation_type='sigmoid') for _ in range(10)]    # Çıkış (0-9)
-    ]
-    
-    # Bağlantıları yeniden oluştur
-    connections = {layer_idx: {} for layer_idx in range(len(layers)-1)}
-    for layer_idx in range(len(layers)-1):
-        for neuron in layers[layer_idx]:
-            for next_neuron in layers[layer_idx+1]:
-                conn = Connection(
-                    fromTo=[neuron.id, next_neuron.id],
-                    weight=random.uniform(-1/np.sqrt(len(layers[layer_idx])), 
-                    1/np.sqrt(len(layers[layer_idx]))))
-                if neuron.id not in connections[layer_idx]:
-                    connections[layer_idx][neuron.id] = []
-                connections[layer_idx][neuron.id].append(conn)
+
+
     
     # Verileri yükle
     X_train, y_train = prepare_mnist_data(images_file, labels_file)
@@ -1437,25 +1488,9 @@ def train_digits(epochs=10, batch_size=64, learning_rate=0.1, test_size=0.2, int
     # Train-test split
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=test_size)
     
-    # Ağ yapısını Digits için ayarla (8x8=64)
-    layers = [
-        [Neuron(activation_type='sigmoid') for _ in range(64)],
-        [Neuron(activation_type='relu') for _ in range(32)],
-        [Neuron(activation_type='sigmoid') for _ in range(10)]
-    ]
+
     
-    # Bağlantıları yeniden oluştur
-    connections = {layer_idx: {} for layer_idx in range(len(layers)-1)}
-    for layer_idx in range(len(layers)-1):
-        for neuron in layers[layer_idx]:
-            for next_neuron in layers[layer_idx+1]:
-                conn = Connection(
-                    fromTo=[neuron.id, next_neuron.id],
-                    weight=random.uniform(-1/np.sqrt(len(layers[layer_idx])), 
-                    1/np.sqrt(len(layers[layer_idx]))))
-                if neuron.id not in connections[layer_idx]:
-                    connections[layer_idx][neuron.id] = []
-                connections[layer_idx][neuron.id].append(conn)
+
     
     # Eğitim
     train_network(
@@ -1495,7 +1530,23 @@ def evaluate_network(X_test, y_test):
 
 
 
+def disable_all_biases():
+    for layer_idx in connections:
+        for neuron_id in connections[layer_idx]:
+            for conn in connections[layer_idx][neuron_id]:
+                conn.bias = 0
 
+# Kullanım:
+disable_all_biases()
+
+def enable_all_biases():
+    for layer_idx in connections:
+        for neuron_id in connections[layer_idx]:
+            for conn in connections[layer_idx][neuron_id]:
+                conn.bias = random.uniform(-0.1, 0.1)  # Rastgele küçük değerlerle yeniden başlat
+
+# Kullanım:
+#enable_all_biases()
 
 
 
@@ -1609,6 +1660,7 @@ while True:
 
     elif cmd.startswith("train_digits("):
         try:
+            setLayers(64,32,10)
             # Parametreleri ayrıştır (varsayılan değerlerle)
             params = cmd[len("train_digits("):-1].split(";")
             
@@ -1651,33 +1703,53 @@ while True:
 
     elif cmd.startswith("train_custom("):
         try:
-            # Parametreleri ayrıştır (dosya yolu zorunlu)
+            # Parametreleri ayrıştır
             params = cmd[len("train_custom("):-1].split(";")
-            
+
             if len(params) < 1 or not params[0].strip():
                 raise ValueError("Dosya yolu gereklidir")
-            
+
             file_path = params[0].strip()
-            
+
             # Varsayılan değerler
+            network_structure = [2, 4, 1]  # Varsayılan ağ yapısı: 2-4-1
             epochs = 10
             batch_size = 128
             learning_rate = 0.1
             intelligence = None
-            
-            # Kullanıcı parametrelerini al
-            if len(params) > 1 and params[1].strip(): epochs = int(params[1])
-            if len(params) > 2 and params[2].strip(): batch_size = int(params[2])
-            if len(params) > 3 and params[3].strip(): learning_rate = float(params[3])
-            if len(params) > 4 and params[5].strip(): intelligence = float(params[4])
-            
+
+            # Parametreleri parse et
+            param_index = 1
+            if len(params) > param_index and params[param_index].strip():
+                # Ağ yapısı parametresi (örn: "2,4,1")
+                if "[" in params[param_index] or "(" in params[param_index]:
+                    # Köşeli veya normal parantezli girişler için
+                    network_structure = eval(params[param_index])
+                else:
+                    # Virgülle ayrılmış değerler için
+                    network_structure = list(map(int, params[param_index].split(",")))
+                param_index += 1
+
+            if len(params) > param_index and params[param_index].strip(): epochs = int(params[param_index])
+            param_index += 1
+            if len(params) > param_index and params[param_index].strip(): batch_size = int(params[param_index])
+            param_index += 1
+            if len(params) > param_index and params[param_index].strip(): learning_rate = float(params[param_index])
+            param_index += 1
+            if len(params) > param_index and params[param_index].strip(): intelligence = float(params[param_index])
+
+            # Ağ yapısını oluştur
+            setLayers(*network_structure)
+
             print(f"\nÖzel Veri Seti Eğitim Parametreleri:")
             print(f"- Dosya: {file_path}")
+            print(f"- Ağ Yapısı: {network_structure}")
             print(f"- Epochs: {epochs}")
             print(f"- Batch Size: {batch_size}")
             print(f"- Learning Rate: {learning_rate}")
             print(f"- Intelligence Threshold: {intelligence if intelligence is not None else 'Kapalı'}")
-            
+
+            # Verileri yükle ve eğit
             X, y = modeltrainingprogram.read_csv_file(file_path)
             train_network(
                 X, y,
@@ -1686,16 +1758,15 @@ while True:
                 learning_rate=learning_rate,
                 intelligenceValue=intelligence
             )
-            
+
         except Exception as e:
             print("Hatalı komut formatı! Örnek kullanımlar:")
-            print("train_custom('veri.csv')  # Sadece dosya yolu")
-            print("train_custom('veri.csv';5)  # Dosya yolu ve epoch")
-            print("train_custom('veri.csv';10;64;0.05;0.01)  # Tüm parametreler")
-            print("Parametre sırası: file_path;epochs;batch_size;learning_rate;intelligence")
+            print("train_custom('veri.csv')  # Varsayılan parametrelerle (2-4-1 ağ)")
+            print("train_custom('veri.csv';[2,4,1])  # Ağ yapısı belirterek")
+            print("train_custom('veri.csv';2,4,1;50;64;0.01)  # Tüm parametreler")
+            print("train_custom('veri.csv';2,4,1;50;64;0.01;0.005)  # Intelligence ile")
+            print("Parametre sırası: file_path;[network_structure];epochs;batch_size;learning_rate;intelligence")
             traceback.print_exc()
-
-
     elif cmd.startswith("add_neuron("):
         try:
             args = cmd[11:-1].split(",")

@@ -1,91 +1,189 @@
 import numpy as np
-import csv
-import os
-from PIL import Image, ImageDraw
 import random
+import csv
+import matplotlib.pyplot as plt
+from PIL import Image
+import os
 
-def generate_digit_image(digit, size=(28, 28), noise_level=0.1):
-    """Rastgele bir rakam çizimi oluştur"""
-    img = Image.new('L', size, color=0)  # Siyah arka plan
-    draw = ImageDraw.Draw(img)
-    
-    # Rakamın başlangıç pozisyonu ve boyutu
-    width, height = size
-    digit_size = random.randint(10, min(20, width-10, height-10))  # Görüntüyü aşmayacak şekilde
-    
-    # Pozisyonu güvenli aralıkta hesapla
-    max_x = max(5, width - digit_size - 5)
-    max_y = max(5, height - digit_size - 5)
-    
-    x = random.randint(5, max_x)
-    y = random.randint(5, max_y)
-    
-    # Rakam çiz (basit şekiller)
-    if digit == 0:
-        draw.ellipse([x, y, x+digit_size, y+digit_size], outline=255, width=2)
-    elif digit == 1:
-        draw.line([x+digit_size//2, y, x+digit_size//2, y+digit_size], fill=255, width=2)
-    elif digit == 2:
-        draw.arc([x, y, x+digit_size, y+digit_size], 30, 270, fill=255, width=2)
-    elif digit == 3:
-        draw.arc([x, y, x+digit_size, y+digit_size//2], 200, 340, fill=255, width=2)
-        draw.arc([x, y+digit_size//2, x+digit_size, y+digit_size], 200, 340, fill=255, width=2)
-    elif digit == 4:
-        draw.line([x, y+digit_size//2, x+digit_size, y+digit_size//2], fill=255, width=2)
-        draw.line([x+digit_size//2, y, x+digit_size//2, y+digit_size], fill=255, width=2)
-    elif digit == 5:
-        draw.line([x, y, x+digit_size, y], fill=255, width=2)
-        draw.line([x, y, x, y+digit_size//2], fill=255, width=2)
-        draw.line([x, y+digit_size//2, x+digit_size, y+digit_size//2], fill=255, width=2)
-        draw.line([x+digit_size, y+digit_size//2, x+digit_size, y+digit_size], fill=255, width=2)
-        draw.line([x, y+digit_size, x+digit_size, y+digit_size], fill=255, width=2)
-    elif digit == 6:
-        draw.ellipse([x, y, x+digit_size, y+digit_size], outline=255, width=2)
-        draw.line([x+digit_size//2, y+digit_size//2, x+digit_size//2, y+digit_size-5], fill=255, width=2)
-    elif digit == 7:
-        draw.line([x, y, x+digit_size, y], fill=255, width=2)
-        draw.line([x+digit_size, y, x, y+digit_size], fill=255, width=2)
-    elif digit == 8:
-        draw.ellipse([x, y, x+digit_size, y+digit_size//2], outline=255, width=2)
-        draw.ellipse([x, y+digit_size//2, x+digit_size, y+digit_size], outline=255, width=2)
-    elif digit == 9:
-        draw.ellipse([x, y, x+digit_size, y+digit_size], outline=255, width=2)
-        draw.line([x+digit_size//2, y, x+digit_size//2, y+digit_size//2], fill=255, width=2)
-    
-    # Gürültü ekle (gerçekçilik için)
-    img_array = np.array(img)
-    noise = np.random.randint(0, 50, size=img_array.shape) * (np.random.random(size=img_array.shape)) < noise_level
-    img_array = np.clip(img_array + noise, 0, 255).astype(np.uint8)
-    
-    return img_array
+class DigitGenerator:
+    def __init__(self):
+        self.size = 8
+        self.digits = {
+            0: self.generate_zero,
+            1: self.generate_one,
+            2: self.generate_two,
+            3: self.generate_three,
+            4: self.generate_four,
+            5: self.generate_five,
+            6: self.generate_six,
+            7: self.generate_seven,
+            8: self.generate_eight,
+            9: self.generate_nine
+        }
+        
+    # Her rakam için özel çizim fonksiyonları
+    def generate_zero(self):
+        arr = np.zeros((self.size, self.size))
+        for i in range(2, 6):
+            arr[i][2] = 1
+            arr[i][5] = 1
+        for j in range(2, 6):
+            arr[2][j] = 1
+            arr[5][j] = 1
+        return arr
 
-def create_dataset(num_samples_per_digit=200, output_file='minst.csv'):
-    """MNIST benzeri bir dataset oluştur ve CSV'ye kaydet"""
-    with open(output_file, 'w', newline='') as csvfile:
-        writer = csv.writer(csvfile)
+    def generate_one(self):
+        arr = np.zeros((self.size, self.size))
+        for i in range(1, 7):
+            arr[i][4] = 1
+        arr[1][3] = 1
+        arr[2][2] = 1
+        return arr
+
+    def generate_two(self):
+        arr = np.zeros((self.size, self.size))
+        arr[1][2:6] = 1
+        arr[2][5] = 1
+        arr[3][4] = 1
+        arr[4][3] = 1
+        arr[5][2] = 1
+        arr[6][2:6] = 1
+        return arr
+
+    def generate_three(self):
+        arr = np.zeros((self.size, self.size))
+        arr[1][2:6] = 1
+        arr[2][5] = 1
+        arr[3][4] = 1
+        arr[4][3:5] = 1
+        arr[5][5] = 1
+        arr[6][2:6] = 1
+        return arr
+
+    def generate_four(self):
+        arr = np.zeros((self.size, self.size))
+        for i in range(1, 5):
+            arr[i][3] = 1
+        arr[4][2:6] = 1
+        for i in range(5, 7):
+            arr[i][5] = 1
+        return arr
+
+    def generate_five(self):
+        arr = np.zeros((self.size, self.size))
+        arr[1][2:6] = 1
+        arr[2][2] = 1
+        arr[3][2:5] = 1
+        arr[4][5] = 1
+        arr[5][5] = 1
+        arr[6][2:5] = 1
+        return arr
+
+    def generate_six(self):
+        arr = np.zeros((self.size, self.size))
+        arr[1][3:5] = 1
+        arr[2][2] = 1
+        arr[3][2] = 1
+        arr[4][2:5] = 1
+        arr[5][2] = 1
+        arr[5][5] = 1
+        arr[6][3:5] = 1
+        return arr
+
+    def generate_seven(self):
+        arr = np.zeros((self.size, self.size))
+        arr[1][2:6] = 1
+        arr[2][5] = 1
+        arr[3][4] = 1
+        arr[4][3] = 1
+        arr[5][3] = 1
+        arr[6][3] = 1
+        return arr
+
+    def generate_eight(self):
+        arr = np.zeros((self.size, self.size))
+        arr[1][3:5] = 1
+        arr[2][2] = 1
+        arr[2][5] = 1
+        arr[3][3:5] = 1
+        arr[4][2] = 1
+        arr[4][5] = 1
+        arr[5][2] = 1
+        arr[5][5] = 1
+        arr[6][3:5] = 1
+        return arr
+
+    def generate_nine(self):
+        arr = np.zeros((self.size, self.size))
+        arr[1][3:5] = 1
+        arr[2][2] = 1
+        arr[2][5] = 1
+        arr[3][2] = 1
+        arr[3][5] = 1
+        arr[4][3:6] = 1
+        arr[5][5] = 1
+        arr[6][3:5] = 1
+        return arr
+
+    def add_variations(self, digit_array):
+        """Rakama çeşitlilik ve gürültü ekler"""
+        for _ in range(3):
+            i, j = random.randint(1,6), random.randint(1,6)
+            digit_array[i][j] = 1 if random.random() > 0.5 else 0
         
-        # Başlık satırı (input1...input784, target0...target9)
-        headers = [f'input{i}' for i in range(784)] + [f'target{i}' for i in range(10)]
-        writer.writerow(headers)
-        
-        for digit in range(10):
-            print(f"Generating {num_samples_per_digit} samples for digit {digit}...")
-            for _ in range(num_samples_per_digit):
-                # Rakam görüntüsü oluştur
-                img_array = generate_digit_image(digit)
+        noise = np.random.rand(*digit_array.shape) * 0.3
+        return np.clip(digit_array + noise, 0, 1)
+
+    def generate_dataset(self, samples_per_digit=1):
+        dataset = []
+        for digit, generator in self.digits.items():
+            for _ in range(samples_per_digit):
+                clean_digit = generator()
+                varied_digit = self.add_variations(clean_digit)
                 
-                # Normalize et (0-1 arası)
-                img_data = img_array.flatten() / 255.0
-                
-                # One-hot encoding için hedef
-                target = [0] * 10
+                # One-hot encoding (10 çıkış nöronu için)
+                target = [0]*10
                 target[digit] = 1
                 
-                # Satırı yaz
-                writer.writerow(list(img_data) + target)
-    
-    print(f"Dataset created successfully: {output_file}")
+                dataset.append((varied_digit.flatten(), target))
+        return dataset
 
+    def save_to_csv(self, filename="digits_dataset.csv"):
+        dataset = self.generate_dataset()
+        with open(filename, 'w', newline='') as csvfile:
+            writer = csv.writer(csvfile)
+            
+            # Başlık satırı (input1...input64, target1...target10)
+            header = [f"input{i+1}" for i in range(self.size*self.size)] + \
+                     [f"target{i+1}" for i in range(10)]
+            writer.writerow(header)
+            
+            for pixels, targets in dataset:
+                writer.writerow(list(pixels) + list(targets))
+        
+        print(f"Toplam {len(dataset)} örnek '{filename}' dosyasına kaydedildi.")
+
+    def visualize_samples(self, num_samples=5):
+        """Rastgele örnekleri görselleştir"""
+        plt.figure(figsize=(15, 3))
+        dataset = self.generate_dataset()
+        for i in range(num_samples):
+            pixels, targets = random.choice(dataset)
+            plt.subplot(1, num_samples, i+1)
+            plt.imshow(pixels.reshape(self.size, self.size), cmap='gray')
+            plt.title(f"Target: {np.argmax(targets)}")
+            plt.axis('off')
+        plt.show()
+
+# Programı çalıştır
 if __name__ == "__main__":
-    # 5000 örnek oluştur (her rakam için 500)
-    create_dataset(num_samples_per_digit=2)
+    generator = DigitGenerator()
+    
+    print("Rakam örnekleri görselleştiriliyor...")
+    generator.visualize_samples()
+    
+    print("Veri seti oluşturuluyor...")
+    generator.save_to_csv()
+    
+    print("\nCSV dosyası başarıyla oluşturuldu. Aşağıdaki komutla eğitime başlayabilirsiniz:")
+    print("train_custom('digits_dataset.csv')")
