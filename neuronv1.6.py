@@ -91,7 +91,7 @@ class Connection:
 
 visualizeNetwork =False
 debug = True  # Global debug değişkeni
-cmd = "train_custom(veri.csv;2,4,1;0.2)" #program başlar başlamaz çalışacak ilk komut
+cmd = "train_custom(veri.csv;2,4,2;0.2)" #program başlar başlamaz çalışacak ilk komut
 
 
 # Ağ oluşturma
@@ -104,10 +104,7 @@ defaultNeuronActivationType='relu'
 
 
 
-# Ağ Yapısı
-input_size = 2  # 28x28 piksel girişi
-hidden_size = 4  # Gizli katmanda 128 nöron
-output_size = 1  # 0-9 için 10 çıktı nöronu
+
 
 # Önce boş bir layers listesi oluştur
 layers = []
@@ -841,9 +838,23 @@ def signal_handler(sig, frame):
     
     if enable_logging:
         print("Veriler kaydediliyor...")
-        save_and_plot_errors()
+        
+        visualize_saved_errors(save_and_plot_errors())
     
     exit(0)
+
+import os
+
+def klasor_hazirla(yol):
+    """Verilen yol için klasör yapısını hazırlar"""
+    try:
+        os.makedirs(yol, exist_ok=True)
+        print(f"Klasör yapısı hazır: {yol}")
+        return True
+    except Exception as e:
+        print(f"Hata oluştu: {e}")
+        return False
+
 
 def save_and_plot_errors():
     """Hata geçmişini kaydet ve görselleştir"""
@@ -854,6 +865,8 @@ def save_and_plot_errors():
         return
     
     # Çıktı dosyasının adını belirle - sadece bir dosya oluştur
+    outputFolder="trainingDatas/"
+    klasor_hazirla(outputFolder)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     output_file_base = f"training_errors_{timestamp}"
     output_file_json = f"{output_file_base}.json"
@@ -870,7 +883,7 @@ def save_and_plot_errors():
         "final_error": error_history[-1] if error_history else None
     }
     
-    with open(output_file_json, 'w') as f:
+    with open(outputFolder+output_file_json, 'w') as f:
         json.dump(data, f)
     
     print(f"Hata verileri {output_file_json} dosyasına kaydedildi.")
@@ -900,16 +913,17 @@ def save_and_plot_errors():
                 fontsize=10)
     
     # Grafiği kaydet
-    plt.savefig(output_file_png, dpi=300, bbox_inches='tight')
+    plt.savefig(outputFolder+output_file_png, dpi=300, bbox_inches='tight')
     plt.close()
     
     print(f"Hata grafiği {output_file_png} dosyasına kaydedildi.")
+    return outputFolder+output_file_json
 
-def train_network(X_train, y_train, batch_size=256, epochs=None, intelligenceValue=None, learning_rate=0.1, output_graph=enable_logging):
+def train_network(X_train, y_train, batch_size=1, epochs=None, intelligenceValue=None, learning_rate=0.05, output_graph=enable_logging):
     global error_history, epoch_history, start_time, enable_logging
     
     # Loglama ayarını güncelle
-    enable_logging = output_graph
+    #enable_logging = output_graph
     
     if enable_logging:
         print("Hata grafiği kaydı etkin. Eğitim sonunda veya Ctrl+C ile çıkış yaptığınızda grafik oluşturulacak.")
@@ -1079,52 +1093,143 @@ def train_network(X_train, y_train, batch_size=256, epochs=None, intelligenceVal
     
     return cortical_column, avg_error
 
-# Kaydedilmiş hata verilerini görselleştirmek için ayrı bir fonksiyon
+
+
+
+import numpy as np
+from scipy import stats
+import matplotlib.pyplot as plt
+
 def visualize_saved_errors(filename):
-    """Kaydedilmiş hata verilerini grafik olarak görselleştir"""
+    """Kaydedilmiş hata verilerini gelişmiş grafiklerle görselleştir"""
     with open(filename, 'r') as f:
         data = json.load(f)
     
-    plt.figure(figsize=(12, 6))
+    errors = np.array(data["errors"])
+    epochs = np.array(data["epochs"])
     
-    # Hata eğrisini çiz
-    plt.plot(data["epochs"], data["errors"], 'b-', linewidth=1)
-    plt.plot(data["epochs"], data["errors"], 'ro', markersize=3)
+    # Ana grafik
+    plt.figure(figsize=(15, 10))
     
-    # Grafiği biçimlendir
-    plt.title('Eğitim Sırasında Ortalama Hata Değişimi')
+    # 1. Hata eğrisi (ana grafik)
+    plt.subplot(2, 2, (1, 3))  # 2 satır, 2 sütun, 1 ve 3'ü birleştir
+    main_plot = plt.plot(epochs, errors, 'b-', linewidth=1, label='Ortalama Hata')
+    plt.plot(epochs, errors, 'ro', markersize=1)
+    
+    # Eğilim çizgisi ekleme
+    z = np.polyfit(epochs, errors, 3)
+    p = np.poly1d(z)
+    plt.plot(epochs, p(epochs), "r--", linewidth=2, label='Eğilim Çizgisi')
+    
+    # Dönüm noktalarını bulma
+    diff = np.diff(errors)
+    turning_points = np.where(np.diff(np.sign(diff)))[0] + 1
+    
+    if len(turning_points) > 0:
+        for tp in turning_points:
+            plt.plot(epochs[tp], errors[tp], 'go', markersize=2, label='Dönüm Noktası' if tp == turning_points[0] else "")
+    
+    # Grafik özelleştirme
+    plt.title('Eğitim Sırasında Hata Değişimi ve Eğilimi')
     plt.xlabel('Epoch')
     plt.ylabel('Ortalama Hata')
     plt.grid(True, linestyle='--', alpha=0.7)
+    plt.legend()
     
-    # Y eksenini logaritmik yap (opsiyonel)
-    if min(data["errors"]) > 0:
-        plt.yscale('log')
+    # Son 20% epoch için yakınlaştırılmış grafik
+    plt.subplot(2, 2, 2)
+    last_20 = int(len(epochs) * 0.8)
+    plt.plot(epochs[last_20:], errors[last_20:], 'b-', linewidth=1.5)
+    plt.plot(epochs[last_20:], errors[last_20:], 'ro', markersize=2)
     
-    # Son hata değerini grafiğe ekle
-    plt.annotate(f'Son Hata: {data["errors"][-1]:.6f}',
-                xy=(data["epochs"][-1], data["errors"][-1]),
-                xytext=(data["epochs"][-1]-1, data["errors"][-1]*1.2),
-                arrowprops=dict(facecolor='black', shrink=0.05, width=1.5),
-                fontsize=10)
+    # Son bölüm için lineer regresyon
+    slope, intercept, r_value, p_value, std_err = stats.linregress(
+        epochs[last_20:], errors[last_20:])
+    plt.plot(epochs[last_20:], intercept + slope*epochs[last_20:], 
+             'g--', linewidth=2, 
+             label=f'Eğim: {slope:.2e}\nR²: {r_value**2:.2f}')
     
-    # Eğitim süresini grafiğe ekle
-    hours = data["total_time_seconds"] // 3600
-    minutes = (data["total_time_seconds"] % 3600) // 60
-    time_str = f"{int(hours)}s {int(minutes)}d" if hours > 0 else f"{int(minutes)}d"
-    plt.text(0.02, 0.02, f'Toplam Eğitim Süresi: {time_str}',
-             transform=plt.gca().transAxes, fontsize=9)
+    plt.title('Son %20 Epoch Yakınlaştırma')
+    plt.xlabel('Epoch')
+    plt.ylabel('Hata')
+    plt.grid(True, linestyle='--', alpha=0.7)
+    plt.legend()
     
-    # Grafiği göster
+    # Hata dağılımı histogramı
+    plt.subplot(2, 2, 4)
+    plt.hist(errors, bins=30, color='blue', edgecolor='black', alpha=0.7)
+    plt.title('Hata Dağılımı')
+    plt.xlabel('Hata Değeri')
+    plt.ylabel('Frekans')
+    plt.grid(True, linestyle='--', alpha=0.7)
+    
+    # Genel bilgiler
+    stats_text = (
+        f"Başlangıç Hata: {errors[0]:.6f}\n"
+        f"Son Hata: {errors[-1]:.6f}\n"
+        f"En Düşük Hata: {np.min(errors):.6f}\n"
+        f"Ortalama Hata: {np.mean(errors):.6f}\n"
+        f"Standart Sapma: {np.std(errors):.6f}\n"
+        f"Dönüm Noktaları: {len(turning_points)}\n"
+        f"Toplam Epoch: {len(epochs)}\n"
+        f"Toplam Süre: {data['total_time_seconds']:.2f} sn"
+    )
+    
+    plt.figtext(0.75, 0.15, stats_text, bbox=dict(facecolor='white', alpha=0.5), 
+                fontsize=9)
+    
     plt.tight_layout()
-    plt.show()
     
     # Grafiği kaydet
-    output_file = os.path.splitext(filename)[0] + "_viz.png"
+    output_file = os.path.splitext(filename)[0] + "_advanced_viz.png"
     plt.savefig(output_file, dpi=300, bbox_inches='tight')
     plt.close()
     
-    print(f"Hata grafiği {output_file} dosyasına kaydedildi.")
+    print(f"Gelişmiş hata grafiği {output_file} dosyasına kaydedildi.")
+    
+    # Eğilim analizi
+    analyze_trend(errors, epochs)
+
+def analyze_trend(errors, epochs):
+    """Hata eğilimini analiz eder ve yorumlar"""
+    # Son %20'lik kısım için eğim analizi
+    last_20 = int(len(epochs) * 0.8)
+    slope, _, _, _, _ = stats.linregress(epochs[last_20:], errors[last_20:])
+    
+    print("\n=== HATA EĞİLİM ANALİZİ ===")
+    print(f"Son hata değeri: {errors[-1]:.6f}")
+    print(f"Son %20 epoch'taki ortalama hata eğimi: {slope:.2e}")
+    
+    if slope > 1e-6:
+        print("UYARI: Hatalarda artış eğilimi var! Model overfitting olabilir veya öğrenme oranı yüksek olabilir.")
+    elif slope < -1e-6:
+        print("Hatalarda düşüş eğilimi devam ediyor. Eğitime devam edilebilir.")
+    else:
+        print("Hatalar sabitlenmiş görünüyor. Daha fazla eğitimin faydası olmayabilir.")
+    
+    # Yakınsama kontrolü
+    last_10_errors = errors[-10:]
+    std_last_10 = np.std(last_10_errors)
+    if std_last_10 < 0.001:
+        print(f"Hatalar yakınsamış (son 10 epoch std: {std_last_10:.6f})")
+    else:
+        print(f"Hatalar henüz tam yakınsamadı (son 10 epoch std: {std_last_10:.6f})")
+    
+    # Öneriler
+    print("\n=== ÖNERİLER ===")
+    if slope > 0 and len(errors) > 50:
+        print("- Öğrenme oranını azaltmayı deneyin")
+        print("- Regularization ekleyin")
+        print("- Early stopping uygulayın")
+    elif slope < -1e-4:
+        print("- Model hala öğreniyor, eğitime devam edebilirsiniz")
+    else:
+        print("- Model performansını artırmak için mimariyi değiştirmeyi deneyin")
+
+
+
+
+
 """
 # Örnek veri
 X_train = [[0.1, 0.9, 0.2], [0.8, 0.3, 0.5], ...]
@@ -1467,10 +1572,10 @@ class CorticalColumn:
         self.tuning_threshold = 128  # After this many changes, tune parameters
         self.param_change_history = {}  # Track which params changed and resulting error
         self.tunable_params = {
-            #'max_neurons_multiplier': {'min': 4, 'max': 16, 'step': 2},
-            #'health_threshold': {'min': 0.2, 'max': 0.8, 'step': 0.05},
-            #'activation_tolerance': {'min': 0.05, 'max': 0.3, 'step': 0.05},
-            #'gradient_threshold': {'min': 0.01, 'max': 0.1, 'step': 0.01},
+            'max_neurons_multiplier': {'min': 4, 'max': 16, 'step': 2},
+            'health_threshold': {'min': 0.2, 'max': 0.8, 'step': 0.05},
+            'activation_tolerance': {'min': 0.05, 'max': 0.3, 'step': 0.05},
+            'gradient_threshold': {'min': 0.01, 'max': 0.1, 'step': 0.01},
             'error_increase_threshold': {'min': 0.05, 'max': 0.4, 'step': 0.05}
         }
         self.optimal_params = set()  # Parameters that should no longer be tuned
@@ -1480,14 +1585,14 @@ class CorticalColumn:
         self.max_neurons_base = 64
         self.max_neurons_multiplier = 8  # Reduced from 16 to be more conservative
         self.error_increase_threshold = 0.1  # Reduced from 0.3 to be more sensitive to error increases
-        self.strict_mode = True  # Enable strict mode to prevent rapid changes
-        self.health_threshold = 0.2  # Reduced from 0.5 for more conservative neuron addition
+        self.strict_mode = False  # Enable strict mode to prevent rapid changes
+        self.health_threshold = 0.3  # Reduced from 0.5 for more conservative neuron addition
         self.activation_target = 0.5
-        self.activation_tolerance = 0.2
+        self.activation_tolerance = 0.3
         self.gradient_threshold = 0.03  # More sensitive gradient threshold
         
         # Stability parameters (new)
-        self.stabilization_period = 1  # Epochs to wait between structural changes
+        self.stabilization_period = 0  # Epochs to wait between structural changes
         self.epochs_since_change = 0
         self.change_magnitude = 0.05  # Maximum percentage change allowed
         self.consecutive_increases = 0  # Track consecutive error increases

@@ -4,4 +4,4 @@ __pycache__/
 .env
 env/
 .vscode/
-training_errors_*
+trainingDatas/
