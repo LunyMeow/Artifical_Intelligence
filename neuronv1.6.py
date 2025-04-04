@@ -54,7 +54,7 @@ class Neuron:
         elif self.activation_type == 'tanh':
             return 1 - self.output ** 2  # f'(x) = 1 - f(x)^2
         elif self.activation_type == 'relu':
-            return 1 if self.output > 0 else 0  # ReLU türevi
+            return 1 if self.weightedSum > 0 else 0  # ReLU türevi
         else:
             raise ValueError(f"Unknown activation type: {self.activation_type}")
 
@@ -90,11 +90,13 @@ class Connection:
 
 
 visualizeNetwork =False
-debug = False  # Global debug değişkeni
+debug = True  # Global debug değişkeni
+cmd = "train_custom(veri.csv;2,4,1;0.2)" #program başlar başlamaz çalışacak ilk komut
+
 
 # Ağ oluşturma
-randomMinWeight = -5.0
-randomMaxWeight = 5.0
+randomMinWeight = -2.0
+randomMaxWeight = 2.0
 
 activation_types = ['sigmoid', 'tanh', 'relu']
 defaultNeuronActivationType='relu'
@@ -141,7 +143,6 @@ def setLayers(*neuronInLayers):
     
     setConnections()
 
-setLayers(2, 4, 1)  # 2 giriş, 4 gizli, 1 çıkış nöronu
 
 
 # Kullanım örneği:
@@ -241,7 +242,6 @@ scatter = None
 lines = []
 app = None
 
-cmd = "train_custom(veri.csv;2,3,5,2;0.2)" #program başlar başlamaz çalışacak ilk komut
 
 
 
@@ -770,226 +770,8 @@ def get_neuron_connections(neuron_id, incoming=True, outgoing=True):
 
 
 
-def calculate_neuron_delta(neuron, target_value):
-    """Nöronun delta (hata) değerini hesaplar"""
-    error = target_value - neuron.value
-    derivative = neuron.activation_derivative()
-    return error * derivative
-    """# Son katman nöronu için delta hesapla
-    output_neuron = layers[-1][0]  # Son katmanın ilk nöronu
-    target = 0.8  # Beklenen çıktı
-    delta = calculate_neuron_delta(output_neuron, target)"""
-
-def calculate_weight_update(neuron, connection, target, learning_rate=1):
-    delta = calculate_neuron_delta(neuron, target)
-    from_neuron = get_neuron_by_id(connection.connectedTo[0])
-    
-    # Ağırlık ve bias güncellemesi
-    weight_update = learning_rate * delta * from_neuron.value
-    bias_update = learning_rate * delta * 0.1  # Bias için daha küçük adım
-    
-    return weight_update, bias_update  # Artık tuple döndürüyor
 
 
-def diagnose_connection(neuron, connection,target, threshold=0.5):
-    """Bağlantı sorunlarını teşhis eder"""
-    from_neuron = get_neuron_by_id(connection.connectedTo[0])
-    
-    # 1. Aşırı değer kontrolü
-    if abs(from_neuron.value) > 10:  # Aşırı aktivasyon
-        return "Önceki nöron aşırı değer üretiyor: {from_neuron.value:.4f}"
-    
-    # 2. Ölü nöron kontrolü
-    if abs(from_neuron.value) < 0.0001 and abs(connection.weight) < 0.0001:
-        return "Ölü bağlantı (aktivasyon yok)"
-    
-    # 3. Tutarsız gradiyent kontrolü
-    delta = calculate_neuron_delta(neuron, target)
-    expected_grad = delta * from_neuron.value
-    if abs(expected_grad) < threshold * 0.01:
-        return "Zayıf gradiyent (öğrenme yok)"
-    
-    return "Bağlantı normal"
-
-def connection_health_score(neuron, connection , target):
-    """0-1 arasında bağlantı sağlık skoru"""
-    from_neuron = get_neuron_by_id(connection.connectedTo[0])
-    delta = calculate_neuron_delta(neuron, target)
-    
-    # 1. Aktivasyon uygunluğu (0-1 arasında olmalı)
-    activation_score = 1 - min(abs(from_neuron.value - 0.5), 0.5)/0.5
-    
-    # 2. Gradiyent büyüklüğü
-    grad = delta * from_neuron.value
-    grad_score = min(abs(grad)*10, 1)
-    
-    # 3. Ağırlık büyüklüğü (aşırı büyük/küçük olmamalı)
-    weight_score = 1 - min(abs(connection.weight)/5, 1)
-    
-    return (activation_score + grad_score + weight_score) / 3
-
-def calculate_hidden_delta(neuron, next_layer_deltas):
-    """Gizli katman nöronları için delta hesaplama"""
-    # Sonraki katmandaki deltalar ve bağlantı ağırlıklarını topla
-    weighted_sum = 0
-    for conn in get_neuron_connections(neuron.id, outgoing=True):
-        next_neuron_id = conn.connectedTo[1]
-        next_neuron = get_neuron_by_id(next_neuron_id)
-        next_delta = next_layer_deltas.get(next_neuron_id, 0)
-        weighted_sum += conn.weight * next_delta
-    
-    return weighted_sum * neuron.activation_derivative()
-def update_hidden_weights(layer_idx,target, learning_rate=0.01):
-    """Gizli katman ağırlıklarını günceller"""
-    for neuron in layers[layer_idx]:
-        # Sonraki katman deltalarını topla
-        next_layer_deltas = {}
-        for next_neuron in layers[layer_idx+1]:
-            next_layer_deltas[next_neuron.id] = calculate_neuron_delta(next_neuron, target)
-        
-        # Nöronun delta değerini hesapla
-        delta = calculate_hidden_delta(neuron, next_layer_deltas)
-        
-        # Gelen bağlantıları güncelle
-        for conn in get_neuron_connections(neuron.id, incoming=True):
-            from_neuron = get_neuron_by_id(conn.connectedTo[0])
-            weight_update = learning_rate * delta * from_neuron.value
-            conn[2] += weight_update  # Ağırlığı güncelle
-
-
-def adapt_network(currentError, target: list, perfectValueArg=0.3,learning_rateArg = 1,current_epoch=None, total_epochs=None):
-    error = hata_payi(target, runAI())
-    print(f"Hata değeri: {error}")
-    # Add these at the beginning
-    MAX_WEIGHT = 10.0
-    GRADIENT_CLIP = 1.0
-    gradients=[]
-
-    def normalize_weight(w):
-        return max(-MAX_WEIGHT, min(MAX_WEIGHT, w))
-    
-    def clip_gradient(g):
-        return max(-GRADIENT_CLIP, min(GRADIENT_CLIP, g))
-
-    for layer_idx, layer in enumerate(layers[::-1]):  # Katmanları ters sırada dolaş (çıkıştan girişe)
-        current_layer_idx = len(layers) - 1 - layer_idx  # Gerçek katman indeksi
-        is_last_layer = (current_layer_idx == len(layers) - 1)
-        is_first_layer = (current_layer_idx == 0)
-
-        if debug :
-            print(f"\n=== Katman {current_layer_idx} {'(SON KATMAN)' if is_last_layer else '(GİZLİ KATMAN)' if not is_first_layer else '(GİRİŞ KATMANI)'} ===")
-
-        for neuron_idx, neuron in enumerate(layer):
-            if debug :
-                print(f"\nNöron ID: {neuron.id} (Index: {neuron_idx})")
-            neuronsConnections = get_neuron_connections(neuron.id, True, True)
-
-            for conn in neuronsConnections:
-                from_id = conn.connectedTo[0]
-                to_id = conn.connectedTo[1]
-                weight = conn.weight
-                conn_layer_idx = current_layer_idx if to_id == neuron.id else current_layer_idx - 1
-                
-                grad_info={
-                    'layer':current_layer_idx,
-                    'from':conn.connectedTo[0],
-                    'to':conn.connectedTo[1],
-                    'grad':0.0,
-                    'weight':conn.weight
-                }
-
-                # Bağlantı yönünü belirle
-                if to_id == neuron.id:  # Gelen bağlantı
-                    direction = f"{from_id} <- {to_id}"
-                    connection_type = "GELEN"
-                    from_neuron = get_neuron_by_id(from_id)
-                    to_neuron = neuron
-                else:  # Giden bağlantı
-                    direction = f"{from_id} -> {to_id}"
-                    connection_type = "GİDEN"
-                    from_neuron = neuron
-                    to_neuron = get_neuron_by_id(to_id)
-
-                # Hesaplamalar
-                if is_last_layer:
-                    # SON KATMAN için işlemler
-                    target_value = target[neuron_idx] if neuron_idx < len(target) else 0
-                    delta = calculate_neuron_delta(neuron, target_value)
-
-                    if to_id == neuron.id:  # Gelen bağlantı ise
-                        # Modify weight update sections like this:
-                        weight_update, bias_update = calculate_weight_update(neuron, conn, target_value)
-                        weight_update = clip_gradient(weight_update * learning_rateArg)  # Apply learning rate and clip
-                        
-                        grad_info['grad'] = weight_update
-
-                        new_weight = normalize_weight(conn.weight + weight_update)
-
-
-                        diagnose = diagnose_connection(neuron, conn, target_value)
-
-                        # Add debugging
-                        if abs(new_weight) > 100:  # Still large but more reasonable
-                            print(f"Large weight update: {conn.weight} -> {new_weight}")
-
-                        if "aşırı" in diagnose.lower():
-                            
-                            print(f"  ! AŞIRI DEĞER DÜZELTME: {weight:.6f} -> {conn.weight:.6f}")
-                        elif "zayıf" in diagnose.lower():
-                            
-                            print(f"  ! ZAYIF BAĞLANTI GÜÇLENDİRME: {weight:.6f} -> {conn.weight:.6f}")
-                        conn.weight = normalize_weight(conn.weight + weight_update)
-                        conn.bias = normalize_weight(conn.bias + bias_update)
-                            
-                        
-                else:
-                    # GİZLİ KATMANLAR için işlemler
-                    if to_id == neuron.id:  # Gelen bağlantı ise
-                        # Sonraki katmanın deltalarını hesapla
-                        next_layer_deltas = {}
-                        if not is_last_layer:
-                            for next_neuron in layers[current_layer_idx + 1]:
-                                if current_layer_idx == len(layers) - 2:  # Son katman öncesi
-                                    next_target = target[layers[-1].index(next_neuron)] if layers[-1].index(next_neuron) < len(target) else 0
-                                    next_layer_deltas[next_neuron.id] = calculate_neuron_delta(next_neuron, next_target)
-
-                        delta = calculate_hidden_delta(neuron, next_layer_deltas)
-                        weight_update = delta * from_neuron.value * learning_rateArg 
-
-                        grad_info['grad'] = weight_update
-
-                        # Aktivasyon kontrolü
-                        if abs(from_neuron.value) < 0.0001 and neuron.activation_type == "relu":
-                            print("  ! ÖLÜ ReLU TESPİT EDİLDİ")
-                            from_neuron.value = 0.1  # Küçük bir değerle aktive et
-
-                        conn.weight += weight_update  # Now modifying the Connection object's weight directly
-                gradients.append(grad_info)
-
-                # Debug çıktıları
-                if debug:
-                    # Renkli gösterim
-                    weight_color = "\033[91m" if weight < 0 else "\033[92m"  # Kırmızı/yeşil
-                    weight_str = f"{weight_color}{weight:.6f}\033[0m"
-                    update_color = "\033[94m" if weight_update >=0 else "\033[95m"
-                    update_str = f"{update_color}{weight_update:+.6f}\033[0m"
-
-                    print(f"  {direction} | {connection_type} | Ağırlık: {weight_str} | Güncelleme: {update_str}")
-                    print(f"    Kaynak: {from_neuron.value:.6f} | Hedef: {to_neuron.value:.6f}")
-
-                    if to_id == neuron.id:  # Gelen bağlantılar için ekstra bilgi
-                        effectiveness = weight * from_neuron.value
-                        print(f"    Etki Katsayısı: {effectiveness:.6f}")
-                
-            # İlerleme çubuğu için hangi modda olduğumuzu belirle
-            if total_epochs is not None:
-                # Epoch modunda
-                progress = (current_epoch / total_epochs) if total_epochs > 0 else 0
-                print_epoch_progress(current_epoch, total_epochs, error)
-            else:
-                # Hata değeri modunda
-                print_error_progress(error, target_error=perfectValueArg)
-    return gradients   
 
 def print_error_progress(current_error, target_error=0.01, width=50):
     """Hata değerine göre ilerleme çubuğu"""
@@ -1038,7 +820,107 @@ def compute_gradients(y_true, output):
 
 
 
-def train_network(X_train, y_train, batch_size=256, epochs=None, intelligenceValue=None, learning_rate=0.1):
+import signal
+import json
+import time
+import matplotlib.pyplot as plt
+import os
+from datetime import datetime
+
+# Global değişkenler
+error_history = []
+epoch_history = []
+start_time = None
+enable_logging = True  # Loglama varsayılan olarak kapalı
+
+def signal_handler(sig, frame):
+    """Ctrl+C ile çıkış yakalandığında çağrılacak fonksiyon"""
+    global enable_logging
+    
+    print("\nEğitim durduruldu.")
+    
+    if enable_logging:
+        print("Veriler kaydediliyor...")
+        save_and_plot_errors()
+    
+    exit(0)
+
+def save_and_plot_errors():
+    """Hata geçmişini kaydet ve görselleştir"""
+    global error_history, epoch_history, start_time
+    
+    if not error_history:
+        print("Kaydedilecek veri yok.")
+        return
+    
+    # Çıktı dosyasının adını belirle - sadece bir dosya oluştur
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    output_file_base = f"training_errors_{timestamp}"
+    output_file_json = f"{output_file_base}.json"
+    output_file_png = f"{output_file_base}.png"
+    
+    # Toplam eğitim süresini hesapla
+    total_time = time.time() - start_time if start_time else 0
+    
+    # Veriyi JSON formatında kaydet
+    data = {
+        "errors": error_history,
+        "epochs": epoch_history,
+        "total_time_seconds": total_time,
+        "final_error": error_history[-1] if error_history else None
+    }
+    
+    with open(output_file_json, 'w') as f:
+        json.dump(data, f)
+    
+    print(f"Hata verileri {output_file_json} dosyasına kaydedildi.")
+    
+    # Grafiği oluştur ve kaydet
+    plt.figure(figsize=(12, 6))
+    
+    # Hata eğrisini çiz
+    plt.plot(epoch_history, error_history, 'b-', linewidth=1)
+    plt.plot(epoch_history, error_history, 'ro', markersize=3)
+    
+    # Grafiği biçimlendir
+    plt.title('Eğitim Sırasında Ortalama Hata Değişimi')
+    plt.xlabel('Epoch')
+    plt.ylabel('Ortalama Hata')
+    plt.grid(True, linestyle='--', alpha=0.7)
+    
+    # Y eksenini logaritmik yap (opsiyonel - hatanın hızlı değişimlerini daha iyi gösterir)
+    if min(error_history) > 0:  # Logaritmik eksen için tüm değerler pozitif olmalı
+        plt.yscale('log')
+    
+    # Son hata değerini grafiğe ekle
+    plt.annotate(f'Son Hata: {error_history[-1]:.6f}',
+                xy=(epoch_history[-1], error_history[-1]),
+                xytext=(max(0, epoch_history[-1]-1), error_history[-1]*1.2),
+                arrowprops=dict(facecolor='black', shrink=0.05, width=1.5),
+                fontsize=10)
+    
+    # Grafiği kaydet
+    plt.savefig(output_file_png, dpi=300, bbox_inches='tight')
+    plt.close()
+    
+    print(f"Hata grafiği {output_file_png} dosyasına kaydedildi.")
+
+def train_network(X_train, y_train, batch_size=256, epochs=None, intelligenceValue=None, learning_rate=0.1, output_graph=enable_logging):
+    global error_history, epoch_history, start_time, enable_logging
+    
+    # Loglama ayarını güncelle
+    enable_logging = output_graph
+    
+    if enable_logging:
+        print("Hata grafiği kaydı etkin. Eğitim sonunda veya Ctrl+C ile çıkış yaptığınızda grafik oluşturulacak.")
+    
+    # Hata geçmişi ve epoch geçmişini sıfırla
+    error_history = []
+    epoch_history = []
+    
+    # Ctrl+C sinyalini yakalamak için handler kaydet
+    signal.signal(signal.SIGINT, signal_handler)
+    
     # Kortikal kolon oluştur
     cortical_column = CorticalColumn(layers)
     
@@ -1053,91 +935,196 @@ def train_network(X_train, y_train, batch_size=256, epochs=None, intelligenceVal
         print(f"Uyarı: Giriş boyutu uyumsuz! Ağ girişi: {len(layers[0])}, Veri girişi: {len(X_train[0])}")
         return
 
-    # Eğitim döngüsü
-    while True:
-        if epochs is not None and epoch >= epochs:
-            break
-            
-        total_error = 0
-        processed_samples = 0
-        epoch_gradients = []  # Gradyanları topla
-        
-        # Batch işleme
-        for batch_start in range(0, total_samples, batch_size):
-            batch_end = min(batch_start + batch_size, total_samples)
-            X_batch = X_train[batch_start:batch_end]
-            y_batch = y_train[batch_start:batch_end]
-            batch_error = 0
-            
-            for X, y in zip(X_batch, y_batch):
-                # İleri yayılım
-                for i, val in enumerate(X[:len(layers[0])]):
-                    layers[0][i].value = val
-                runAI()
-                
-                # Hata hesapla
-                output = [neuron.value for neuron in layers[-1][:len(y)]]
-                error = hata_payi(y, output)
-                batch_error += error
-                
-
-                # Gradyan hesapla ve kaydet
-                gradients = compute_gradients(y, output)
-                epoch_gradients.extend(gradients)
-                # Cortical column güncellemesi
-                recent_avg_error = cortical_column.monitor_network(avg_error,epoch_gradients)
-                cortical_column.adapt_neurons()
-                cortical_column._adapt_connections()
-            
-            # Batch istatistikleri
-            batch_error /= len(X_batch)
-            total_error += batch_error * len(X_batch)
-            processed_samples += len(X_batch)
-            
-            # Ortalama hatayı güncelle
-            avg_error = total_error / processed_samples
-            
-            # IntelligenceValue kontrolü (her batch sonunda)
-
-
-            if intelligenceValue is not None and avg_error <= intelligenceValue:
-                print(f"\nHata {intelligenceValue} değerinin altına düştü! Eğitim durduruldu.")
+    try:
+        # Eğitim döngüsü
+        while True:
+            if epochs is not None and epoch >= epochs:
                 break
                 
+            total_error = 0
+            processed_samples = 0
+            epoch_gradients = []  # Gradyanları topla
+            korteksChanges=[]
+            
+            # Batch işleme
+            for batch_start in range(0, total_samples, batch_size):
+                
+                batch_end = min(batch_start + batch_size, total_samples)
+                X_batch = X_train[batch_start:batch_end]
+                y_batch = y_train[batch_start:batch_end]
+                batch_error = 0
+                
+                for X, y in zip(X_batch, y_batch):
+                    # İleri yayılım
+                    for i, val in enumerate(X[:len(layers[0])]):
+                        layers[0][i].value = val
+                    runAI()
+                    
+                    # Hata hesapla
+                    output = [neuron.value for neuron in layers[-1][:len(y)]]
+                    error = hata_payi(y, output)
+                    batch_error += error
+                    
+                    # Gradyanları hesapla
+
+                    
+                    gradients = compute_gradients(y, output)
+                    gradient_dicts = [{'layer': layer_idx, 'grad': grad} for layer_idx, grad in gradients.items()]
+                    epoch_gradients.extend(gradient_dicts)
+                    recent_avg_error = cortical_column.monitor_network(avg_error, gradient_dicts)
+                    
+                        
+                    changes = cortical_column.adapt_neurons()
+                    if changes:
+                        korteksChanges.append({
+                            'type': 'neuron_adaptation',
+                            'epoch': epoch,
+                            'batch': batch_start,
+                            'changes': changes,
+                            'before_error': avg_error
+                        })
+                    
+                    conn_changes = cortical_column._adapt_connections()
+                    if conn_changes:
+                        korteksChanges.append({
+                            'type': 'connection_adaptation',
+                            'epoch': epoch,
+                            'batch': batch_start,
+                            'changes': conn_changes,
+                            'before_error': avg_error
+                        })
+                    
+                    setConnections()
+                
+                # Batch istatistikleri
+                batch_error /= len(X_batch)
+                total_error += batch_error * len(X_batch)
+                processed_samples += len(X_batch)
+                
+                # Ortalama hatayı güncelle
+                avg_error = total_error / processed_samples
+
+
+                                # Debug logları
+                if debug and korteksChanges:
+                    print(f"\n[DEBUG] Son Değişiklikler:")
+                    for change in korteksChanges[-min(3, len(korteksChanges)):]:  # Son 3 değişikliği göster
+                        print(f" - {change['type']} at epoch {change['epoch']}, batch {change['batch']}")
+                        print(f"   Error before: {change['before_error']:.6f}")
+                        if 'changes' in change:
+                            print(f"   Changes made: {len(change['changes'])}")
+                
+
+                    
+                # İlerleme raporu
+                current_time = time.time()
+                if current_time - last_print_time > 10 or batch_end >= total_samples:
+                    elapsed_time = current_time - start_time
+                    samples_per_sec = processed_samples / elapsed_time if elapsed_time > 0 else 0
+                    remaining_time = (total_samples - processed_samples) / samples_per_sec if samples_per_sec > 0 else 0
+                    
+                    print(f"\nEpoch {epoch+1}/{epochs if epochs else '∞'} - İlerleme: {processed_samples}/{total_samples} ({100*processed_samples/total_samples:.1f}%)")
+                    print(f"Ortalama Hata: {avg_error:.6f}")
+                    print(f"Geçen Süre: {elapsed_time/60:.1f} dak - Tahmini Kalan Süre: {remaining_time/60:.1f} dak")
+                    print(f"Örnek/Saniye: {samples_per_sec:.1f}")
+                    
+                    # Eğer loglama etkinse, hata değerini kaydet (ara dosya oluşturmadan)
+                    if enable_logging:
+                        error_history.append(avg_error)
+                        epoch_history.append(epoch + processed_samples/total_samples)
+                    
+                    last_print_time = current_time
+                                    # IntelligenceValue kontrolü (her batch sonunda)
+                if intelligenceValue is not None and avg_error <= intelligenceValue:
+                    print(f"\nHata {intelligenceValue} değerinin altına düştü! Eğitim durduruldu.")
+                    break
+            
+            # Epoch sonu işlemleri
+            epoch += 1
+                        # Parametre tuning kontrolü (her epoch sonunda)
+            if cortical_column.change_counter >= cortical_column.tuning_threshold:
+                tuning_changes = cortical_column._tune_parameters()
+                if tuning_changes:
+                    korteksChanges.append({
+                        'type': 'parameter_tuning',
+                        'epoch': epoch,
+                        'changes': tuning_changes,
+                        'after_error': avg_error
+                    })
+                # Final raporu
+        
 
             
-            # İlerleme raporu
-            current_time = time.time()
-            if current_time - last_print_time > 10 or batch_end >= total_samples:
-                elapsed_time = current_time - start_time
-                samples_per_sec = processed_samples / elapsed_time if elapsed_time > 0 else 0
-                remaining_time = (total_samples - processed_samples) / samples_per_sec if samples_per_sec > 0 else 0
-                
-                print(f"\nEpoch {epoch+1}/{epochs if epochs else '∞'} - İlerleme: {processed_samples}/{total_samples} ({100*processed_samples/total_samples:.1f}%)")
-                print(f"Ortalama Hata: {avg_error:.6f}")
-                print(f"Geçen Süre: {elapsed_time/60:.1f} dak - Tahmini Kalan Süre: {remaining_time/60:.1f} dak")
-                print(f"Örnek/Saniye: {samples_per_sec:.1f}")
-                
-                last_print_time = current_time
-        
-        # Epoch sonu işlemleri
-        epoch += 1
-        
-        # IntelligenceValue kontrolü (her epoch sonunda)
-        if intelligenceValue is not None and avg_error <= intelligenceValue:
-            break
-    
-    # Final raporu
-    total_time = time.time() - start_time
-    print(f"\n=== EĞİTİM TAMAMLANDI ===")
-    print(f"Toplam Süre: {total_time/60:.1f} dakika")
-    print(f"Son Hata: {avg_error:.6f}")
-    print(f"Toplam Epoch: {epoch}")
-    print(f"Final Ağ Yapısı: {[len(layer) for layer in layers]}")
-    print(f"Katman Sağlık Skorları:")
-    for layer_idx, health in cortical_column.layer_health.items():
-        print(f"  Katman {layer_idx}: {health['health_score']:.2f}")
 
+        
+        # Final raporu
+        total_time = time.time() - start_time
+        print(f"\n=== EĞİTİM TAMAMLANDI ===")
+        print(f"Toplam Değişiklik: {len(korteksChanges)}")
+        print(f"Toplam Süre: {total_time/60:.1f} dakika")
+        print(f"Son Hata: {avg_error:.6f}")
+        print(f"Toplam Epoch: {epoch}")
+        print(f"Final Ağ Yapısı: {[len(layer) for layer in layers]}")
+        print(f"Katman Sağlık Skorları:")
+        for layer_idx, health in cortical_column.layer_health.items():
+            print(f"  Katman {layer_idx}: {health['health_score']:.2f}")
+        
+        # Eğitim tamamlandığında hata verilerini kaydet ve görselleştir (eğer loglama etkinse)
+        if enable_logging:
+            save_and_plot_errors()
+        
+    except KeyboardInterrupt:
+        # Ctrl+C ile çıkış yakalandı, signal handler zaten işleyecek
+        pass
+    
+    return cortical_column, avg_error
+
+# Kaydedilmiş hata verilerini görselleştirmek için ayrı bir fonksiyon
+def visualize_saved_errors(filename):
+    """Kaydedilmiş hata verilerini grafik olarak görselleştir"""
+    with open(filename, 'r') as f:
+        data = json.load(f)
+    
+    plt.figure(figsize=(12, 6))
+    
+    # Hata eğrisini çiz
+    plt.plot(data["epochs"], data["errors"], 'b-', linewidth=1)
+    plt.plot(data["epochs"], data["errors"], 'ro', markersize=3)
+    
+    # Grafiği biçimlendir
+    plt.title('Eğitim Sırasında Ortalama Hata Değişimi')
+    plt.xlabel('Epoch')
+    plt.ylabel('Ortalama Hata')
+    plt.grid(True, linestyle='--', alpha=0.7)
+    
+    # Y eksenini logaritmik yap (opsiyonel)
+    if min(data["errors"]) > 0:
+        plt.yscale('log')
+    
+    # Son hata değerini grafiğe ekle
+    plt.annotate(f'Son Hata: {data["errors"][-1]:.6f}',
+                xy=(data["epochs"][-1], data["errors"][-1]),
+                xytext=(data["epochs"][-1]-1, data["errors"][-1]*1.2),
+                arrowprops=dict(facecolor='black', shrink=0.05, width=1.5),
+                fontsize=10)
+    
+    # Eğitim süresini grafiğe ekle
+    hours = data["total_time_seconds"] // 3600
+    minutes = (data["total_time_seconds"] % 3600) // 60
+    time_str = f"{int(hours)}s {int(minutes)}d" if hours > 0 else f"{int(minutes)}d"
+    plt.text(0.02, 0.02, f'Toplam Eğitim Süresi: {time_str}',
+             transform=plt.gca().transAxes, fontsize=9)
+    
+    # Grafiği göster
+    plt.tight_layout()
+    plt.show()
+    
+    # Grafiği kaydet
+    output_file = os.path.splitext(filename)[0] + "_viz.png"
+    plt.savefig(output_file, dpi=300, bbox_inches='tight')
+    plt.close()
+    
+    print(f"Hata grafiği {output_file} dosyasına kaydedildi.")
 """
 # Örnek veri
 X_train = [[0.1, 0.9, 0.2], [0.8, 0.3, 0.5], ...]
@@ -1465,38 +1452,61 @@ def enable_all_biases():
 
 class CorticalColumn:
     def __init__(self, main_network_layers):
-        self.monitoring_window = 5
+        # Original parameters
+        self.monitoring_window = 20
         self.performance_history = []
         self.error_history = []
         self.gradient_history = []
         self.layer_health = {}
-        self.adaptation_threshold = 0.1
+        self.adaptation_threshold = 0.2
         self.added_layers = set()
         self.last_changes = []
         
-        # Optimize Edilmiş Parametreler
-        self.max_neurons_base = 64
-        self.max_neurons_multiplier = 4
-        self.error_increase_threshold = 0.1
-        self.strict_mode = True
-        self.health_threshold = 0.45
-        self.activation_target = 0.5
-        self.activation_tolerance = 0.15
-        self.gradient_threshold = 0.08
+        # Parameter tuning tracking
+        self.change_counter = 0
+        self.tuning_threshold = 128  # After this many changes, tune parameters
+        self.param_change_history = {}  # Track which params changed and resulting error
+        self.tunable_params = {
+            #'max_neurons_multiplier': {'min': 4, 'max': 16, 'step': 2},
+            #'health_threshold': {'min': 0.2, 'max': 0.8, 'step': 0.05},
+            #'activation_tolerance': {'min': 0.05, 'max': 0.3, 'step': 0.05},
+            #'gradient_threshold': {'min': 0.01, 'max': 0.1, 'step': 0.01},
+            'error_increase_threshold': {'min': 0.05, 'max': 0.4, 'step': 0.05}
+        }
+        self.optimal_params = set()  # Parameters that should no longer be tuned
+        self.last_average_error = float('inf')
         
-        # Katman sağlık verilerini başlat
+        # Improved, more stable parameters
+        self.max_neurons_base = 64
+        self.max_neurons_multiplier = 8  # Reduced from 16 to be more conservative
+        self.error_increase_threshold = 0.1  # Reduced from 0.3 to be more sensitive to error increases
+        self.strict_mode = True  # Enable strict mode to prevent rapid changes
+        self.health_threshold = 0.2  # Reduced from 0.5 for more conservative neuron addition
+        self.activation_target = 0.5
+        self.activation_tolerance = 0.2
+        self.gradient_threshold = 0.03  # More sensitive gradient threshold
+        
+        # Stability parameters (new)
+        self.stabilization_period = 1  # Epochs to wait between structural changes
+        self.epochs_since_change = 0
+        self.change_magnitude = 0.05  # Maximum percentage change allowed
+        self.consecutive_increases = 0  # Track consecutive error increases
+        self.max_consecutive_increases = 3  # Maximum allowed consecutive increases
+        
+        # Initialize layer health data
         for i, layer in enumerate(main_network_layers):
             self.layer_health[i] = {
                 'activation_mean': [],
                 'gradient_mean': [],
                 'health_score': 0.5,
                 'added_neurons': 0,
-                'dynamic_limit': self._dynamic_neuron_limit(i)
+                'dynamic_limit': self._dynamic_neuron_limit(i),
+                'consecutive_changes': 0,  # Track consecutive changes to a layer
+                'last_changed_epoch': 0  # Track when this layer was last changed
             }
-        
 
     def _dynamic_neuron_limit(self, layer_idx):
-        """Problemin boyutuna göre akıllı nöron limiti"""
+        """Intelligent neuron limit based on problem dimensions"""
         input_size = len(layers[0]) if layers else 8
         output_size = len(layers[-1]) if layers else 1
         return min(
@@ -1508,10 +1518,11 @@ class CorticalColumn:
                 int(np.log2(input_size + output_size) * 16)
             )
         )
-
     
     def monitor_network(self, epoch_error, gradients):
+        current_epoch = len(self.error_history)
         current_layer_count = len(layers)
+        
         for layer_idx in range(current_layer_count):
             if layer_idx not in self.layer_health:
                 self.layer_health[layer_idx] = {
@@ -1519,39 +1530,58 @@ class CorticalColumn:
                     'gradient_mean': [],
                     'health_score': 0.4,
                     'added_neurons': 0,
-                    'dynamic_limit': self._dynamic_neuron_limit(layer_idx)
+                    'dynamic_limit': self._dynamic_neuron_limit(layer_idx),
+                    'consecutive_changes': 0,
+                    'last_changed_epoch': 0
                 }
 
-        # Hata artış kontrolü
+        # Check for error increase
         if len(self.error_history) > 0:
             last_error = self.error_history[-1]
-            if (epoch_error - last_error) > self.error_increase_threshold:
-                print(f"\nUYARI: Hata artışı tespit edildi! Son değişiklikler geri alınıyor...")
+            error_delta = epoch_error - last_error
+            
+            # Track consecutive increases
+            if error_delta > 0:
+                self.consecutive_increases += 1
+            else:
+                self.consecutive_increases = 0
+            
+            # If error increased significantly or too many consecutive increases, revert changes
+            if ((error_delta > self.error_increase_threshold) or 
+                (self.consecutive_increases >= self.max_consecutive_increases)):
+                if debug:
+                    print(f"\nWARNING: Error increase detected! Rolling back recent changes...")
+                    print(f"Error change: {error_delta:.4f}, Consecutive increases: {self.consecutive_increases}")
                 self._revert_last_changes()
-                return last_error
+                self.epochs_since_change = 0  # Reset stabilization counter
+                self.consecutive_increases = 0
+                return last_error  # Return previous error value instead of current one
 
         self.error_history.append(epoch_error)
         self.gradient_history.append(gradients)
+        
+        # Increment stabilization counter
+        self.epochs_since_change += 1
 
-        # Katman sağlık güncellemeleri
+        # Layer health updates
         for layer_idx, layer in enumerate(layers):
             health_data = self.layer_health[layer_idx]
             
-            # Dinamik limiti güncelle
+            # Update dynamic limit
             health_data['dynamic_limit'] = self._dynamic_neuron_limit(layer_idx)
             
-            # Aktivasyon skoru
+            # Activation score - with smoother calculation
             activations = [n.value for n in layer]
             activation_mean = np.clip(np.mean(activations), -1, 1)
             activation_deviation = abs(activation_mean - self.activation_target)
             activation_score = max(0, 1 - (activation_deviation / self.activation_tolerance))
             
-            # Gradyan skoru
+            # Gradient score - more stable calculation
             layer_gradients = [g['grad'] for g in gradients if g['layer'] == layer_idx]
             grad_mean = np.mean(np.abs(layer_gradients)) if layer_gradients else 0
-            gradient_score = min(1, grad_mean * 10) if grad_mean > self.gradient_threshold else 0
+            gradient_score = min(1, grad_mean * 10)  # Adjusted sensitivity
             
-            # Ağırlık skoru
+            # Weight score
             if layer_idx > 0:
                 weights = [abs(c.weight) for n in layer for c in get_neuron_connections(n.id, incoming=True)]
                 weight_mean = np.mean(weights) if weights else 0
@@ -1559,14 +1589,19 @@ class CorticalColumn:
             else:
                 weight_score = 1
                 
-            # Sağlık skoru güncelleme
-            new_health = (activation_score*0.5 + gradient_score*0.3 + weight_score*0.2)
-            health_data['health_score'] = health_data['health_score']*0.8 + new_health*0.2
+            # Health score update with smoother transition (EMA)
+            # Use different rates based on whether error is improving
+            if len(self.error_history) > 2 and self.error_history[-1] <= self.error_history[-2]:
+                # Error is improving - update health more slowly
+                alpha = 0.1  # Slow update
+            else:
+                # Error is worsening - update health more quickly
+                alpha = 0.3  # Faster update
+                
+            new_health = (activation_score*0.4 + gradient_score*0.4 + weight_score*0.2)
+            health_data['health_score'] = health_data['health_score']*(1-alpha) + new_health*alpha
         
-
-
-
-            # Bağlantı sağlık izleme ekle
+        # Connection health monitoring
         connection_health = self._analyze_connections()
         for layer_idx in connection_health:
             if layer_idx not in self.layer_health:
@@ -1575,140 +1610,364 @@ class CorticalColumn:
             layer_conn_health = [c['health_score'] for c in connection_health[layer_idx]]
             if layer_conn_health:
                 conn_health_score = np.mean(layer_conn_health)
-                # Katman sağlık skoruna bağlantı sağlığını da ekle (%30 ağırlık)
+                # Add connection health to layer health score (30% weight)
                 self.layer_health[layer_idx]['health_score'] = (
                     self.layer_health[layer_idx]['health_score'] * 0.7 + 
                     conn_health_score * 0.3
                 )
 
-        return np.mean(self.error_history[-self.monitoring_window:])
+        # Calculate average error and check for parameter tuning
+        avg_error = np.mean(self.error_history[-min(self.monitoring_window, len(self.error_history)):])
+        self._evaluate_parameter_changes(avg_error)
+        
+        return avg_error
     
     def _revert_last_changes(self):
-        """Son yapılan değişiklikleri geri al (bağlantı desteği eklendi)"""
+        """Revert recent changes with improved connection handling"""
+        if not self.last_changes:
+            return
+            
         for change in reversed(self.last_changes):
             if change['type'] == 'add_neuron':
                 layer = layers[change['layer_idx']]
                 if layer and layer[-1].id == change['neuron_id']:
                     layer.pop()
-                    print(f"  - Nöron {change['neuron_id']} {change['layer_idx']}. katmandan kaldırıldı")
+                    if debug:
+                        print(f"  - Neuron {change['neuron_id']} removed from layer {change['layer_idx']}")
+                    # Update layer health tracking
+                    if change['layer_idx'] in self.layer_health:
+                        self.layer_health[change['layer_idx']]['added_neurons'] -= 1
 
             elif change['type'] == 'remove_neuron':
                 neuron = Neuron(change['value'])
                 neuron.id = change['neuron_id']
                 layers[change['layer_idx']].append(neuron)
-                print(f"  - Nöron {change['neuron_id']} {change['layer_idx']}. katmana geri eklendi")
+                if debug:
+                    print(f"  - Neuron {change['neuron_id']} added back to layer {change['layer_idx']}")
+                # Update layer health tracking
+                if change['layer_idx'] in self.layer_health:
+                    self.layer_health[change['layer_idx']]['added_neurons'] += 1
 
             elif change['type'] == 'add_layer':
                 if change['layer_idx'] < len(layers):
                     removed_layer = layers.pop(change['layer_idx'])
-                    print(f"  - {change['layer_idx']}. katman kaldırıldı ({len(removed_layer)} nöron)")
+                    if debug:
+                        print(f"  - Layer {change['layer_idx']} removed ({len(removed_layer)} neurons)")
 
             elif change['type'] in ['reset_weight', 'clip_weight', 'boost_weight']:
-                # Bağlantı ağırlık değişikliklerini geri al
+                # Revert connection weight changes
                 for layer_idx in connections:
                     if change['from'] in connections[layer_idx]:
                         for conn in connections[layer_idx][change['from']]:
                             if conn.connectedTo[1] == change['to']:
                                 conn.weight = change['old_weight']
-                                print(f"  - Bağlantı {change['from']}→{change['to']} ağırlığı geri alındı: {change['old_weight']:.4f}")
+                                if debug:
+                                    print(f"  - Connection {change['from']}→{change['to']} weight reverted: {change['old_weight']:.4f}")
                                 break
                             
-            # Bağlantıları yeniden oluştur
-            setConnections()
+        # Rebuild connections
 
-        # Değişiklik geçmişini temizle
+        # Clear change history
         self.last_changes = []
+        
+        # Reset consecutive change counters for all layers
+        for layer_idx in self.layer_health:
+            self.layer_health[layer_idx]['consecutive_changes'] = 0
     
     def adapt_neurons(self):
+        """Improved neuron adaptation with stability mechanisms"""
+        # Only make changes after stabilization period
+        if self.epochs_since_change < self.stabilization_period:
+            if debug:
+                print(f"[STABILITY] Waiting for network to stabilize. {self.stabilization_period - self.epochs_since_change} epochs remaining.")
+            return
+            
         self.last_changes = []
 
-        # Önce bağlantı adaptasyonu yap
-        conn_changes = self._adapt_connections()
-        self.last_changes.extend(conn_changes)
+        # Check if parameter tuning is needed
+        if self.tuning_threshold is not None and self.change_counter >= self.tuning_threshold:
+            self._tune_parameters()
+            self.change_counter = 0
+            # Skip other changes this epoch
+            return
 
-        prune_count = self._prune_connections()
-        if prune_count > 0:
-            self.last_changes.append({'type': 'prune', 'count': prune_count})
+        current_epoch = len(self.error_history)
+        changes_made = False
 
-        added_conns = self._add_new_connections()
-        if added_conns > 0:
-            self.last_changes.append({'type': 'add_conn', 'count': added_conns})
-
-        # Sonra nöron adaptasyonu yap (orijinal kod)
+        # First, find the least healthy layer that needs attention
+        candidate_layers = []
         for layer_idx in list(self.layer_health.keys()):
             if layer_idx == 0 or layer_idx == len(layers)-1:
+                continue  # Skip input and output layers
+                
+            health_data = self.layer_health[layer_idx]
+            
+            # Only consider layers that haven't been changed recently
+            if current_epoch - health_data['last_changed_epoch'] < self.stabilization_period:
                 continue
-
+                
+            # Check if layer needs attention
+            current_neurons = len(layers[layer_idx])
+            max_limit = health_data['dynamic_limit']
+            
+            if health_data['health_score'] < self.health_threshold and current_neurons < max_limit:
+                candidate_layers.append((layer_idx, health_data['health_score']))
+        
+        # Sort by health score (unhealthiest first)
+        candidate_layers.sort(key=lambda x: x[1])
+        
+        # Only modify one layer per epoch for stability
+        if candidate_layers:
+            layer_idx = candidate_layers[0][0]
             health_data = self.layer_health[layer_idx]
             current_neurons = len(layers[layer_idx])
             max_limit = health_data['dynamic_limit']
-
-            if (health_data['health_score'] < self.health_threshold and
-                current_neurons < max_limit and
-                health_data['added_neurons'] < max_limit//3):
-
-                add_count = 1 if current_neurons < 32 else 2
-                added_ids = self._add_neurons(layer_idx, add_count)
+            
+            if debug:
+                print(f"\n[DEBUG] Layer {layer_idx} | Health: {health_data['health_score']:.2f} Threshold:{self.health_threshold} | Neurons: {current_neurons}/{max_limit}")
+                
+            # Very controlled neuron addition - at most 1 neuron at a time
+            add_count = 1
+            added_ids = self._add_neurons(layer_idx, add_count)
+            
+            if added_ids:
                 health_data['added_neurons'] += add_count
+                health_data['consecutive_changes'] += 1
+                health_data['last_changed_epoch'] = current_epoch
+                
                 self.last_changes.extend([{
                     'type': 'add_neuron',
                     'layer_idx': layer_idx,
                     'neuron_id': nid
                 } for nid in added_ids])
-
-            elif (health_data['health_score'] > 0.65 and
-                  health_data['added_neurons'] > 0 and
-                  current_neurons > 2):
-
+                
+                if debug:
+                    print(f"[DEBUG] Added {add_count} neuron to layer {layer_idx}. New Neuron ID: {added_ids[0]}")
+                    
+                changes_made = True
+                self.epochs_since_change = 0  # Reset stabilization counter
+        
+        # Check for neuron removal only if we didn't add any
+        if not changes_made:
+            # Find layers with excess neurons
+            removal_candidates = []
+            for layer_idx in list(self.layer_health.keys()):
+                if layer_idx == 0 or layer_idx == len(layers)-1:
+                    continue  # Skip input and output layers
+                    
+                health_data = self.layer_health[layer_idx]
+                
+                # Only consider layers that haven't been changed recently
+                if current_epoch - health_data['last_changed_epoch'] < self.stabilization_period:
+                    continue
+                    
+                # Check if layer has excess healthy neurons
+                current_neurons = len(layers[layer_idx])
+                
+                if (health_data['health_score'] > 0.6 and  # Increased health threshold for removal
+                    health_data['added_neurons'] > 0 and
+                    current_neurons > 4):  # Ensure we keep enough neurons
+                    
+                    removal_candidates.append((layer_idx, health_data['health_score']))
+            
+            # Sort by health score (healthiest first)
+            removal_candidates.sort(key=lambda x: x[1], reverse=True)
+            
+            # Only remove from one layer
+            if removal_candidates:
+                layer_idx = removal_candidates[0][0]
+                health_data = self.layer_health[layer_idx]
+                
+                # Very controlled removal - only one neuron at a time
                 removed = self._remove_neurons(layer_idx, 1)
+                
                 if removed:
                     health_data['added_neurons'] -= 1
+                    health_data['consecutive_changes'] += 1
+                    health_data['last_changed_epoch'] = current_epoch
+                    
                     self.last_changes.append({
                         'type': 'remove_neuron',
                         'layer_idx': layer_idx,
                         'neuron_id': removed.id,
                         'value': removed.value
                     })
+                    
+                    if debug:
+                        print(f"Removed one neuron from layer {layer_idx}!")
+                        
+                    changes_made = True
+                    self.epochs_since_change = 0  # Reset stabilization counter
+        
+        # Increment the change counter
+        self.change_counter += len(self.last_changes)
+        if debug and len(self.last_changes) > 0:
+            print(f"[DEBUG] Change counter: {self.change_counter}/{self.tuning_threshold}")
+            
+        # Always ensure connections are properly set
+        
+        # Only adapt connections if no structural changes were made
+        if not changes_made and self.epochs_since_change >= self.stabilization_period:
+            connection_changes = self._adapt_connections()
+            if connection_changes:
+                self.last_changes.extend(connection_changes)
+                self.epochs_since_change = 0  # Reset stabilization counter
+    def _tune_parameters(self):
+        """Improved parameter tuning with more conservative approach"""
+        if self.tuning_threshold == None:
+            return
+            
+        print("\n[TUNING] Starting parameter tuning...")
+
+        # Only tune parameters that are not already optimal
+        available_params = [p for p in self.tunable_params if p not in self.optimal_params]
+        if not available_params:
+            print("[TUNING] All parameters optimized, skipping tuning.")
+            return
+            
+        # Select a random parameter to tune
+        param_name = random.choice(available_params)
+        param_config = self.tunable_params[param_name]
+        current_value = getattr(self, param_name)
+        
+        # More conservative approach - smaller step size
+        actual_step = param_config['step'] * 0.5  # Half the configured step size
+        
+        # Decide direction (increase or decrease)
+        if param_name in self.param_change_history:
+            history = self.param_change_history[param_name]
+            increases = [h for h in history if h['new_value'] > h['old_value']]
+            decreases = [h for h in history if h['new_value'] < h['old_value']]
+            
+            avg_increase_effect = np.mean([h['error_delta'] for h in increases]) if increases else 0
+            avg_decrease_effect = np.mean([h['error_delta'] for h in decreases]) if decreases else 0
+            
+            # If increasing has been better, continue increasing
+            if avg_increase_effect < avg_decrease_effect:
+                new_value = min(current_value + actual_step, param_config['max'])
+            else:
+                new_value = max(current_value - actual_step, param_config['min'])
+        else:
+            # No history, try small decrease first (often safer)
+            new_value = max(current_value - actual_step, param_config['min'])
+        
+        # Only change if it's actually different
+        if new_value != current_value:
+            print(f"[TUNING] {param_name}: {current_value} -> {new_value}")
+            setattr(self, param_name, new_value)
+            
+            # Record this change
+            if param_name not in self.param_change_history:
+                self.param_change_history[param_name] = []
+                
+            self.param_change_history[param_name].append({
+                'old_value': current_value,
+                'new_value': new_value,
+                'error_before': self.last_average_error,
+                'timestamp': len(self.error_history),
+                'error_delta': 0  # Will be updated after measuring the effect
+            })
+            
+            # Reset stabilization counter when parameters change
+            self.epochs_since_change = 0
+
+    
+    def _evaluate_parameter_changes(self, current_error):
+        """Evaluate the effect of parameter changes on error"""
+        # Update the last average error
+        self.last_average_error = current_error
+        
+        # Check all parameter changes that haven't been evaluated yet
+        for param_name in self.param_change_history:
+            for change in self.param_change_history[param_name]:
+                # If the change hasn't been evaluated and enough time has passed
+                if change['error_delta'] == 0 and len(self.error_history) >= change['timestamp'] + self.monitoring_window:
+                    # Calculate error delta (negative is good, positive is bad)
+                    change['error_delta'] = current_error - change['error_before']
+                    
+                    # If this change reduced error significantly
+                    if change['error_delta'] < -0.05:
+                        print(f"[TUNING] {param_name} değişikliği hatayı azalttı: {change['error_delta']:.4f}")
+                        # If we have multiple successful changes for this param, mark it as optimal
+                        successful_changes = [ch for ch in self.param_change_history[param_name] 
+                                             if ch['error_delta'] < -0.05]
+                        if len(successful_changes) >= 2:
+                            print(f"[TUNING] {param_name} optimal olarak işaretlendi: {getattr(self, param_name)}")
+                            self.optimal_params.add(param_name)
+                    elif change['error_delta'] > 0.05:
+                        print(f"[TUNING] {param_name} değişikliği hatayı artırdı: {change['error_delta']:.4f}")
+                        # Revert the change
+                        print(f"[TUNING] {param_name} değeri geri alınıyor: {change['new_value']} -> {change['old_value']}")
+                        setattr(self, param_name, change['old_value'])
+                    else:
+                        print(f"[TUNING] {param_name} değişikliğinin belirgin etkisi yok: {change['error_delta']:.4f}")
+
     def _add_neurons(self, layer_idx, count):
-        """Akıllı nöron ekleme mekanizması"""
+        """Improved neuron addition with better initialization"""
         if layer_idx <= 0 or layer_idx >= len(layers)-1:
             return []
 
         new_neurons = []
         for _ in range(count):
-            # Mevcut aktivasyonlara göre akıllı başlangıç değeri
+            # Smart initialization based on existing neurons
             layer_activations = [n.value for n in layers[layer_idx]]
-            base_value = np.clip(np.mean(layer_activations), -0.5, 0.5)
-            new_neuron = Neuron(random.uniform(base_value-0.1, base_value+0.1))
+            
+            # More stable initialization - close to the mean but not identical
+            if layer_activations:
+                base_value = np.mean(layer_activations)
+                # Add very small noise
+                new_value = base_value + random.uniform(-0.05, 0.05)
+            else:
+                # Default initialization for empty layers
+                new_value = random.uniform(-0.1, 0.1)
+                
+            new_neuron = Neuron(new_value)
             new_neurons.append(new_neuron)
         
         layers[layer_idx].extend(new_neurons)
-        setConnections()
         return [n.id for n in new_neurons]
 
     def _remove_neurons(self, layer_idx, count):
-        """En az katkı sağlayan nöronları çıkar"""
-        if len(layers[layer_idx]) <= 2:
+        """Improved neuron removal with better selection criteria"""
+        if len(layers[layer_idx]) <= 4:  # Increased minimum from 2 to 4
             return None
             
-        # Aktivasyon ve gradyanlara göre önem sıralaması
+        # Improved importance ranking - more factors considered
         neuron_scores = []
-        for neuron in layers[layer_idx]:
+        for i, neuron in enumerate(layers[layer_idx]):
+            # Get weight info
             incoming = [abs(c.weight) for c in get_neuron_connections(neuron.id, incoming=True)]
             outgoing = [abs(c.weight) for c in get_neuron_connections(neuron.id, outgoing=True)]
-            score = (np.mean(incoming) if incoming else 0) + (np.mean(outgoing) if outgoing else 0)
-            neuron_scores.append((score, neuron))
             
-        # En düşük skorlu nöronları seç
+            # Calculate metrics
+            weight_importance = (np.mean(incoming) if incoming else 0) + (np.mean(outgoing) if outgoing else 0)
+            connection_count = len(incoming) + len(outgoing)
+            
+            # Activation variance (neurons that don't change much are less useful)
+            recent_activations = []
+            for j in range(1, min(11, len(self.error_history) + 1)):
+                if len(self.error_history) >= j:
+                    try:
+                        recent_activations.append(neuron.value)
+                    except:
+                        pass
+                        
+            activation_variance = np.var(recent_activations) if recent_activations else 0
+            
+            # Combined score - higher is more important
+            score = weight_importance + (0.1 * connection_count) + (5 * activation_variance)
+            neuron_scores.append((score, i, neuron))
+            
+        # Sort by score (lowest first)
         neuron_scores.sort(key=lambda x: x[0])
-        removed = []
-        for _ in range(min(count, len(neuron_scores))):
-            if neuron_scores[0][0] < 0.1:  # Yalnızca çok düşük katkılıları çıkar
-                removed.append(layers[layer_idx].pop(layers[layer_idx].index(neuron_scores[0][1])))
-            del neuron_scores[0]
+        
+        # Only remove if its importance is below threshold
+        if neuron_scores and neuron_scores[0][0] < 0.15:  # Conservative threshold
+            idx = neuron_scores[0][1]
+            removed = layers[layer_idx].pop(idx)
+            return removed
             
-        setConnections()
-        return removed[0] if removed else None
+        return None
 
     def _add_layer(self, layer_idx):
         """Add a new layer after the specified layer index."""
@@ -1738,50 +1997,115 @@ class CorticalColumn:
             if i in self.layer_health:
                 self.layer_health[i+1] = self.layer_health[i]
 
-        setConnections()
         print(f"Added new layer at position {layer_idx} with {new_size} neurons")
+
+
     def _analyze_connections(self):
-        """Bağlantı sağlık analizi yapar"""
+        """Improved connection health analysis with better metrics"""
         connection_health = {}
         for layer_idx in connections:
             layer_health = []
             for src_id in connections[layer_idx]:
+                src_neuron = get_neuron_by_id(src_id)
+                if not src_neuron:
+                    continue
+                    
                 for conn in connections[layer_idx][src_id]:
-                    to_neuron = get_neuron_by_id(conn.connectedTo[1])
-                    from_neuron = get_neuron_by_id(src_id)
+                    dst_neuron = get_neuron_by_id(conn.connectedTo[1])
+                    if not dst_neuron:
+                        continue
                     
-                    # Bağlantı sağlık metriği
-                    weight_health = 1 - min(abs(conn.weight)/5, 1)  # 0-1 arası
-                    activation_health = 1 - abs(from_neuron.value - 0.5)  # 0.5'e yakın olmalı
-                    gradient_health = min(abs(conn.weight * from_neuron.value)*10, 1)
+                    # Improved connection health metrics
                     
-                    health_score = (weight_health + activation_health + gradient_health) / 3
+                    # 1. Weight health - penalize extreme values
+                    weight_health = 1 - min(abs(conn.weight)/2, 1)  # 0-1 range
+                    
+                    # 2. Activation contribution
+                    activation_contrib = abs(src_neuron.value * conn.weight)
+                    activation_health = min(activation_contrib * 5, 1)  # Scale up small values
+                    
+                    # 3. Signal propagation - check if output responds to input
+                    propagation_health = 1 - abs(abs(src_neuron.value) - abs(dst_neuron.value))
+                    
+                    # 4. Balance - connections shouldn't dominate
+                    all_incoming = get_neuron_connections(conn.connectedTo[1], incoming=True)
+                    balance_factor = 1.0
+                    if all_incoming:
+                        total_weight = sum(abs(c.weight) for c in all_incoming)
+                        if total_weight > 0:
+                            weight_ratio = abs(conn.weight) / total_weight
+                            # Penalize connections that are too dominant
+                            balance_factor = 1 - min(weight_ratio * 2, 0.9)
+                    
+                    # Combined health score with weighted factors
+                    health_score = (
+                        weight_health * 0.3 + 
+                        activation_health * 0.4 + 
+                        propagation_health * 0.2 + 
+                        balance_factor * 0.1
+                    )
+                    
                     layer_health.append({
                         'connection': conn,
                         'health_score': health_score,
                         'from': src_id,
                         'to': conn.connectedTo[1],
-                        'layer': layer_idx
+                        'layer': layer_idx,
+                        'metrics': {
+                            'weight': weight_health,
+                            'activation': activation_health,
+                            'propagation': propagation_health,
+                            'balance': balance_factor
+                        }
                     })
             connection_health[layer_idx] = layer_health
         return connection_health
     
     def _adapt_connections(self):
-        """Bağlantıları akıllıca adapte eder"""
+        """Greatly improved connection adaptation with more stability"""
         connection_health = self._analyze_connections()
         changes = []
         
-        for layer_idx in connection_health:
-            for conn_data in connection_health[layer_idx]:
+        # Limit the total number of connections to change
+        max_total_changes = 3  # Very conservative
+        total_changes_made = 0
+        
+        # Process layers from worst to best health
+        layer_health_scores = [(layer_idx, np.mean([c['health_score'] for c in connection_health[layer_idx]]) 
+                               if connection_health[layer_idx] else 1.0) 
+                              for layer_idx in connection_health]
+        layer_health_scores.sort(key=lambda x: x[1])  # Sort by health (worst first)
+        
+        for layer_idx, _ in layer_health_scores:
+            if total_changes_made >= max_total_changes:
+                break
+                
+            # Sort connections by health score (ascending)
+            layer_connections = sorted(connection_health[layer_idx], key=lambda x: x['health_score'])
+            
+            # Only look at the worst connections
+            worst_connections = layer_connections[:min(5, len(layer_connections))]
+            
+            for conn_data in worst_connections:
+                if total_changes_made >= max_total_changes:
+                    break
+                    
                 conn = conn_data['connection']
                 health = conn_data['health_score']
                 
-                # Sağlıksız bağlantıları düzelt
-                if health < self.health_threshold:
-                    # 1. Ağırlık sıfıra yakınsa yeniden başlat
+                if debug and health < self.health_threshold:
+                    print(f"[DEBUG] Unhealthy Connection: {conn_data['from']}→{conn_data['to']} | Score: {health:.2f} | Weight: {conn.weight:.4f}")
+                
+                # Only adjust the very unhealthiest connections
+                if health < self.health_threshold * 0.8:  # Even stricter threshold
+                    # 1. Reset near-zero weights
                     if abs(conn.weight) < 0.01:
-                        new_weight = random.uniform(-1/np.sqrt(len(layers[layer_idx])), 
-                                         1/np.sqrt(len(layers[layer_idx])))
+                        # Very conservative initialization
+                        layer_size = len(layers[layer_idx])
+                        scale = 0.5 / np.sqrt(layer_size)
+                        # Always start with a small positive weight
+                        new_weight = random.uniform(0.01, scale)
+                        
                         changes.append({
                             'type': 'reset_weight',
                             'from': conn_data['from'],
@@ -1790,10 +2114,14 @@ class CorticalColumn:
                             'new_weight': new_weight
                         })
                         conn.weight = new_weight
+                        total_changes_made += 1
                     
-                    # 2. Aşırı büyük ağırlıkları kırp
-                    elif abs(conn.weight) > 2.0:
-                        new_weight = np.clip(conn.weight, -2.0, 2.0)
+                    # 2. Gradually reduce extremely large weights
+                    elif abs(conn.weight) > 1.0:  # Reduced threshold
+                        # Apply very gradual reduction
+                        reduction_factor = 0.9  # Reduce by just 10%
+                        new_weight = conn.weight * reduction_factor
+                        
                         changes.append({
                             'type': 'clip_weight',
                             'from': conn_data['from'],
@@ -1802,11 +2130,14 @@ class CorticalColumn:
                             'new_weight': new_weight
                         })
                         conn.weight = new_weight
+                        total_changes_made += 1
                     
-                    # 3. Ölü bağlantıları canlandır
+                    # 3. Boost dead connections minimally
                     elif abs(conn.weight * get_neuron_by_id(conn_data['from']).value) < 0.001:
-                        boost = random.uniform(0.5, 1.5)
+                        # Very minimal boost
+                        boost = 1.05  # Just 5% increase
                         new_weight = conn.weight * boost
+                        
                         changes.append({
                             'type': 'boost_weight',
                             'from': conn_data['from'],
@@ -1815,6 +2146,12 @@ class CorticalColumn:
                             'new_weight': new_weight
                         })
                         conn.weight = new_weight
+                        total_changes_made += 1
+    
+        # Only apply changes if we made any
+        if changes:
+            if debug:
+                print(f"\n[DEBUG] Made {len(changes)} minimal connection changes")
         
         return changes
     
@@ -1866,6 +2203,8 @@ class CorticalColumn:
             
             if possible_pairs:
                 new_pairs = random.sample(possible_pairs, min(2, len(possible_pairs)))
+                if debug and new_pairs:
+                    print(f"[DEBUG] Katman {layer_idx}'da {len(new_pairs)} yeni bağlantı eklendi: {new_pairs}")
                 for src_id, dst_id in new_pairs:
                     if src_id not in connections[layer_idx]:
                         connections[layer_idx][src_id] = []
