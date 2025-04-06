@@ -92,7 +92,7 @@ class Connection:
 visualizeNetwork =False
 debug = True  # Global debug değişkeni
 #cmd = "train_custom(veri.csv;2,5,2;0.0004)" #program başlar başlamaz çalışacak ilk komut
-cmd="train_custom(veri.csv;2,5,2;0.0001;1;3)"
+cmd="train_custom(parity_problem.csv;4,3,5,1;0.0001;1;3)"
 
 
 # Ağ oluşturma
@@ -784,6 +784,8 @@ def train_network(X_train, y_train, batch_size=1, epochs=None, intelligenceValue
     # Eğitim öncesi kontrol
     if len(layers[0]) != len(X_train[0]):
         print(f"Uyarı: Giriş boyutu uyumsuz! Ağ girişi: {len(layers[0])}, Veri girişi: {len(X_train[0])}")
+        print(layers)
+        print(X_train)
         return
 
     try:
@@ -933,7 +935,7 @@ import numpy as np
 from scipy import stats
 import matplotlib.pyplot as plt
 
-def visualize_saved_errors(filename,last_20Arg=0.99):
+def visualize_saved_errors(filename,last_20Arg=0.8):
     """Kaydedilmiş hata verilerini gelişmiş grafiklerle görselleştir"""
     with open(filename, 'r') as f:
         data = json.load(f)
@@ -1218,7 +1220,7 @@ class CorticalColumn:
         self.loss_history = []
 
         self.lr_cooldown =0
-        self.lr_cooldown_period=5
+        self.lr_cooldown_period=10
         self.last_lr_change_epoch = -float('inf')
 
 
@@ -1279,8 +1281,8 @@ class CorticalColumn:
 
 
     def update_learning_rate(self, current_lr, loss_history, 
-                         patience=100, min_lr=1e-10, max_lr=4,
-                         factor=0.05, threshold=1e-10, increase_threshold=0.001):
+                         patience=100, min_lr=1e-10, max_lr=10,
+                         factor=0.1, threshold=1e-3, increase_threshold=0.0001):
         """
         loss_history: Son epoch'lardaki loss değerlerini tutan liste.
         patience: Bu kadar epoch boyunca anlamlı bir iyileşme yoksa LR güncelle.
@@ -1310,7 +1312,7 @@ class CorticalColumn:
             self.log_change('lr down', {
                     'before lr': current_lr,
                     'new lr':new_lr,
-                    'change': new_lr-current_lr  # İlk 10 güncellemeyi göster (performans için)
+                    'change': new_lr-current_lr  
                 })
             print(f"Learning rate azaltıldı: {current_lr:.6f} -> {new_lr:.6f} (iyileşme: {improvement:.4f})")
             return new_lr
