@@ -92,7 +92,7 @@ class Connection:
 visualizeNetwork =False
 debug = True  # Global debug değişkeni
 #cmd = "train_custom(veri.csv;2,5,2;0.0004)" #program başlar başlamaz çalışacak ilk komut
-cmd="train_custom(veri.csv;2,5,2;0.0007;1;3)"
+cmd="train_custom(veri.csv;2,5,2;0.0001;1;3)"
 
 
 # Ağ oluşturma
@@ -933,7 +933,7 @@ import numpy as np
 from scipy import stats
 import matplotlib.pyplot as plt
 
-def visualize_saved_errors(filename):
+def visualize_saved_errors(filename,last_20Arg=0.99):
     """Kaydedilmiş hata verilerini gelişmiş grafiklerle görselleştir"""
     with open(filename, 'r') as f:
         data = json.load(f)
@@ -971,7 +971,7 @@ def visualize_saved_errors(filename):
     
     # Son 20% epoch için yakınlaştırılmış grafik
     plt.subplot(2, 2, 2)
-    last_20 = int(len(epochs) * 0.8)
+    last_20 = int(len(epochs) * last_20Arg)
     plt.plot(epochs[last_20:], errors[last_20:], 'b-', linewidth=1.5)
     plt.plot(epochs[last_20:], errors[last_20:], 'ro', markersize=2)
     
@@ -982,7 +982,7 @@ def visualize_saved_errors(filename):
              'g--', linewidth=2, 
              label=f'Eğim: {slope:.2e}\nR²: {r_value**2:.2f}')
     
-    plt.title('Son %20 Epoch Yakınlaştırma')
+    plt.title(f'Son %{100-last_20Arg*100} Epoch Yakınlaştırma')
     plt.xlabel('Epoch')
     plt.ylabel('Hata')
     plt.grid(True, linestyle='--', alpha=0.7)
@@ -1021,10 +1021,10 @@ def visualize_saved_errors(filename):
     print(f"Gelişmiş hata grafiği {output_file} dosyasına kaydedildi.")
     
     # Eğilim analizi
-    analyze_trend(errors, epochs)
+    analyze_trend(errors, epochs,last_20Arg=last_20Arg)
     
 
-def analyze_trend(errors, epochs,last_20Arg=0.8):
+def analyze_trend(errors, epochs,last_20Arg):
     """Hata eğilimini analiz eder ve yorumlar"""
     # Son %(default 20)'lik kısım için eğim analizi
 
@@ -1033,7 +1033,7 @@ def analyze_trend(errors, epochs,last_20Arg=0.8):
     
     print("\n=== HATA EĞİLİM ANALİZİ ===")
     print(f"Son hata değeri: {errors[-1]:.6f}")
-    print(f"Son %20 epoch'taki ortalama hata eğimi: {slope:.2e}")
+    print(f"Son %{100-last_20Arg*100} epoch'taki ortalama hata eğimi: {slope:.2e}")
     
     if slope > 1e-6:
         print("UYARI: Hatalarda artış eğilimi var! Model overfitting olabilir veya öğrenme oranı yüksek olabilir.")
@@ -1279,7 +1279,7 @@ class CorticalColumn:
 
 
     def update_learning_rate(self, current_lr, loss_history, 
-                         patience=10, min_lr=1e-10, max_lr=4,
+                         patience=100, min_lr=1e-10, max_lr=4,
                          factor=0.05, threshold=1e-10, increase_threshold=0.001):
         """
         loss_history: Son epoch'lardaki loss değerlerini tutan liste.
