@@ -92,7 +92,7 @@ class Connection:
 visualizeNetwork =False
 debug = True  # Global debug değişkeni
 #cmd = "train_custom(veri.csv;2,5,2;0.0004)" #program başlar başlamaz çalışacak ilk komut
-cmd="train_custom(veri.csv;2,5,2;0.0005;1;2)"
+cmd="train_custom(veri.csv;2,5,2;0.0007;1;3)"
 
 
 # Ağ oluşturma
@@ -902,7 +902,7 @@ def train_network(X_train, y_train, batch_size=1, epochs=None, intelligenceValue
         total_time = time.time() - start_time
         print(f"\n=== EĞİTİM TAMAMLANDI ===")
         print(f"Toplam Değişiklik: {len(korteksChanges)}")
-        print(f"Toplam Süre: {total_time/60:.1f} dakika")
+        print(f"Toplam Süre: {total_time/60:.1f} dakika | Toplam saniye: {total_time:.3f}")
         print(f"Son Hata: {avg_error:.6f}")
         print(f"Toplam Epoch: {epoch}")
         print(f"Final Ağ Yapısı: {[len(layer) for layer in layers]}")
@@ -1151,10 +1151,7 @@ def enable_all_biases():
 
 
 
-
-
-class CorticalColumn:
-    """
+"""
     [Başla]
        │
        ├─► (Opsiyonel) Başlangıç Checkpoint'u Oluştur  
@@ -1206,6 +1203,9 @@ class CorticalColumn:
                ├─► Evet → Geri Al (Rollback: Önceki Checkpoint'e dön ve değişiklikleri geri çek)
                └─► Hayır → [Devam]
     """
+
+class CorticalColumn:
+    
     def __init__(self, log_file="network_changes.log", learning_rateArg=0.3):
         global layers, connections
         self.learningRate = learning_rateArg
@@ -1216,6 +1216,11 @@ class CorticalColumn:
         self.log_start_time = time.time()
         # Loss history'yi de burada tutmak isterseniz:
         self.loss_history = []
+
+        self.lr_cooldown =0
+        self.lr_cooldown_period=5
+        self.last_lr_change_epoch = -float('inf')
+
 
         # Log dosyasını başlat (varsa sil, yenisini oluştur)
         with open(self.log_file, 'w') as f:
@@ -1255,15 +1260,27 @@ class CorticalColumn:
         """
         # Eğer self.loss_history kullanılıyorsa:
         self.loss_history.append(avg_error)
-        # Güncel learning rate’i, loss_history’ye göre ayarla:
-        self.learningRate = self.update_learning_rate(
-            self.learningRate, self.loss_history
-        )
+
+                # Cooldown süresini kontrol et
+        if self.current_epoch - self.last_lr_change_epoch >= self.lr_cooldown_period:
+            new_lr = self.update_learning_rate(
+                self.learningRate, 
+                self.loss_history
+            )
+            
+            # Eğer LR değiştiyse cooldown başlat
+            if new_lr != self.learningRate:
+                self.learningRate = new_lr
+                self.last_lr_change_epoch = self.current_epoch
+                if debug:
+                    print(f"LR cooldown başlatıldı. Sonraki {self.lr_cooldown_period} epoch boyunca LR değişmeyecek.")
+        
         return self.learningRate
 
+
     def update_learning_rate(self, current_lr, loss_history, 
-                         patience=10, min_lr=1e-8, max_lr=3,
-                         factor=0.002, threshold=1e-10, increase_threshold=0.001):
+                         patience=10, min_lr=1e-10, max_lr=4,
+                         factor=0.05, threshold=1e-10, increase_threshold=0.001):
         """
         loss_history: Son epoch'lardaki loss değerlerini tutan liste.
         patience: Bu kadar epoch boyunca anlamlı bir iyileşme yoksa LR güncelle.
@@ -1290,21 +1307,44 @@ class CorticalColumn:
         if improvement < threshold:
             new_lr = current_lr * factor
             new_lr = max(new_lr, min_lr)
+            self.log_change('lr down', {
+                    'before lr': current_lr,
+                    'new lr':new_lr,
+                    'change': new_lr-current_lr  # İlk 10 güncellemeyi göster (performans için)
+                })
             print(f"Learning rate azaltıldı: {current_lr:.6f} -> {new_lr:.6f} (iyileşme: {improvement:.4f})")
             return new_lr
 
         # İyileşme çok yüksekse -> LR'i artırmayı düşün
         elif improvement > increase_threshold:
             # Eğer lr zaten max sınırına yakınsa, artırmak yerine azaltmayı tercih et
-            if current_lr >= max_lr * 0.99:
-                new_lr = current_lr * factor
-                new_lr = max(new_lr, min_lr)
-                print(f"Max sınırına ulaşıldı. Learning rate azaltıldı: {current_lr:.6f} -> {new_lr:.6f} (iyileşme: {improvement:.4f})")
+            if current_lr >= max_lr * 0.999:
+                # Max sınıra ulaşıldığında normalden 5 kat daha güçlü azaltma uygula
+                strong_reduction_factor = factor * 10  # Örneğin 0.008*5 = 0.04
+                new_lr = current_lr * (1 - strong_reduction_factor)  # Güçlü azaltma
+                new_lr = max(new_lr, min_lr)  # Min sınırın altına düşmemesini sağla
+                
+                print(f"Max sınırına ulaşıldı. Learning rate güçlü şekilde azaltıldı: "
+                      f"{current_lr:.6f} -> {new_lr:.6f} (iyileşme: {improvement:.4f}, "
+                      f"azaltma faktörü: {strong_reduction_factor:.4f})")
+                
+                self.log_change('lr strong down', {
+                    'before_lr': current_lr,
+                    'new_lr': new_lr,
+                    'change': new_lr - current_lr,
+                    'reduction_factor': strong_reduction_factor,
+                    'reason': 'max_limit_reached'
+                })
                 return new_lr
             else:
-                new_lr = current_lr / factor  # faktörün tersiyle artır
+                new_lr = current_lr * (1 + factor)  # artır
                 new_lr = min(new_lr, max_lr)
                 print(f"Learning rate artırıldı: {current_lr:.6f} -> {new_lr:.6f} (iyileşme: {improvement:.4f})")
+                self.log_change('lr up', {
+                    'before lr': current_lr,
+                    'new lr':new_lr,
+                    'change': new_lr-current_lr  # İlk 10 güncellemeyi göster (performans için)
+                    })
                 return new_lr
 
         # Aksi durumda, lr sabit kalır
