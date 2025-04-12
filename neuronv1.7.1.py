@@ -92,7 +92,7 @@ class Connection:
 visualizeNetwork =False
 debug = True  # Global debug değişkeni
 #cmd = "train_custom(veri.csv;2,5,2;0.0004)" #program başlar başlamaz çalışacak ilk komut
-cmd="train_custom(parity_problem.csv;4,3,5,1;0.0001;1;3)"
+cmd="train_custom(parity_problem.csv;4,3,1;100;1;3)"
 
 
 # Ağ oluşturma
@@ -664,21 +664,25 @@ from datetime import datetime
 # Global değişkenler
 error_history = []
 epoch_history = []
+learning_rate_history=[]
 start_time = None
 enable_logging = True  # Loglama varsayılan olarak kapalı
 
+stopEpoch = False #ctrl C yapınca eğitimi durdurması için
+
+
 def signal_handler(sig, frame):
     """Ctrl+C ile çıkış yakalandığında çağrılacak fonksiyon"""
-    global enable_logging
+    global enable_logging,stopEpoch
     
     print("\nEğitim durduruldu.")
-    
+    stopEpoch =True
     if enable_logging:
         print("Veriler kaydediliyor...")
         
-        visualize_saved_errors(save_and_plot_errors())
+        #visualize_saved_errors(save_and_plot_errors())
+
     
-    exit(0)
 
 import os
 
@@ -717,7 +721,8 @@ def save_and_plot_errors():
         "errors": error_history,
         "epochs": epoch_history,
         "total_time_seconds": total_time,
-        "final_error": error_history[-1] if error_history else None
+        "final_error": error_history[-1] if error_history else None,
+        "learning_rates": learning_rate_history  # Bu yeni eklenen kısım
     }
     
     with open(outputFolder+output_file_json, 'w') as f:
@@ -725,39 +730,13 @@ def save_and_plot_errors():
     
     print(f"Hata verileri {output_file_json} dosyasına kaydedildi.")
     
-    # Grafiği oluştur ve kaydet
-    plt.figure(figsize=(12, 6))
     
-    # Hata eğrisini çiz
-    plt.plot(epoch_history, error_history, 'b-', linewidth=1)
-    plt.plot(epoch_history, error_history, 'ro', markersize=3)
     
-    # Grafiği biçimlendir
-    plt.title('Eğitim Sırasında Ortalama Hata Değişimi')
-    plt.xlabel('Epoch')
-    plt.ylabel('Ortalama Hata')
-    plt.grid(True, linestyle='--', alpha=0.7)
     
-    # Y eksenini logaritmik yap (opsiyonel - hatanın hızlı değişimlerini daha iyi gösterir)
-    if min(error_history) > 0:  # Logaritmik eksen için tüm değerler pozitif olmalı
-        plt.yscale('log')
-    
-    # Son hata değerini grafiğe ekle
-    plt.annotate(f'Son Hata: {error_history[-1]:.6f}',
-                xy=(epoch_history[-1], error_history[-1]),
-                xytext=(max(0, epoch_history[-1]-1), error_history[-1]*1.2),
-                arrowprops=dict(facecolor='black', shrink=0.05, width=1.5),
-                fontsize=10)
-    
-    # Grafiği kaydet
-    plt.savefig(outputFolder+output_file_png, dpi=300, bbox_inches='tight')
-    plt.close()
-    
-    print(f"Hata grafiği {output_file_png} dosyasına kaydedildi.")
     return outputFolder+output_file_json
 
 def train_network(X_train, y_train, batch_size=1, epochs=None, intelligenceValue=None, learning_rate=0.05, output_graph=enable_logging):
-    global error_history, epoch_history, start_time, enable_logging
+    global error_history, epoch_history, start_time, enable_logging,learning_rate_history
     
     # Loglama ayarını güncelle
     #enable_logging = output_graph
@@ -768,6 +747,8 @@ def train_network(X_train, y_train, batch_size=1, epochs=None, intelligenceValue
     # Hata geçmişi ve epoch geçmişini sıfırla
     error_history = []
     epoch_history = []
+    learning_rate_history=[]
+    newLR=0.0
     
     # Ctrl+C sinyalini yakalamak için handler kaydet
     signal.signal(signal.SIGINT, signal_handler)
@@ -791,14 +772,16 @@ def train_network(X_train, y_train, batch_size=1, epochs=None, intelligenceValue
     try:
         # Eğitim döngüsü
         while True:
-            cortical_column.current_epoch = epoch
-                
+            cortical_column.current_epoch = epoch #her logdan önce epoch değeri yazılıyor her epochta epoch değeri yazılıyor yani logdaki değişiklikler o epochu gösteriyor. yani 30. epochda lr değişti logu varsa o epochta backpropagationa girilmeden önce lr değiştirilmiştir 
+            #yani logdaki ortalama hata değeri eğer lr değiştirilmişse backpropagation yapılmadan önceki hata değeridir bir sonraki log o lr ye göre backpropagation yapılıp hata yazılmıştır
             total_error = 0
             processed_samples = 0
             epoch_gradients = []  # Gradyanları topla
             korteksChanges=[]
             
             # Batch işleme
+            newLR=cortical_column.monitor_network(avg_error) #burası learning rate değiştiriyor
+
             for batch_start in range(0, total_samples, batch_size):
                 
                 batch_end = min(batch_start + batch_size, total_samples)
@@ -819,19 +802,13 @@ def train_network(X_train, y_train, batch_size=1, epochs=None, intelligenceValue
 
                     
                     
-                    #recent_avg_error = cortical_column.monitor_network(avg_error)
+                    
                         
                     cortical_column.adapt_neurons()
 
                     
                     cortical_column._adapt_connections()
 
-                    if epoch % 50 == 0 and debug:
-                        cortical_column.log_change('epoch_summary', {
-                            'average_error': avg_error,
-                            'batch_progress': processed_samples/total_samples,
-                            'learning_rate': learning_rate
-                        })
                     
 
                     
@@ -846,14 +823,6 @@ def train_network(X_train, y_train, batch_size=1, epochs=None, intelligenceValue
                 avg_error = total_error / processed_samples
 
 
-                                # Debug logları
-                if debug and korteksChanges:
-                    print(f"\n[DEBUG] Son Değişiklikler:")
-                    for change in korteksChanges[-min(3, len(korteksChanges)):]:  # Son 3 değişikliği göster
-                        print(f" - {change['type']} at epoch {change['epoch']}, batch {change['batch']}")
-                        print(f"   Error before: {change['before_error']:.6f}")
-                        if 'changes' in change:
-                            print(f"   Changes made: {len(change['changes'])}")
                 
 
                     
@@ -873,19 +842,20 @@ def train_network(X_train, y_train, batch_size=1, epochs=None, intelligenceValue
                     if enable_logging:
                         error_history.append(avg_error)
                         epoch_history.append(epoch + processed_samples/total_samples)
+                        learning_rate_history.append(newLR)
                     
                     last_print_time = current_time
                                     # IntelligenceValue kontrolü (her batch sonunda)
             
             
-            cortical_column.monitor_network(avg_error)
             
-            if (epochs > 1 and epoch >= epochs) or(epochs <1 and epochs>avg_error):
+            
+            if ((epochs > 1 and epoch >= epochs) or(epochs <1 and epochs>avg_error)) or stopEpoch == True:
                 if epoch % 50 == 0 and debug:
                     cortical_column.log_change('epoch_summary', {
                         'average_error': avg_error,
-                        'batch_progress': processed_samples/total_samples,
-                        'learning_rate': learning_rate
+                        'batch_progress': processed_samples/total_samples
+                        
                     })
                 
                 break
@@ -934,27 +904,31 @@ def train_network(X_train, y_train, batch_size=1, epochs=None, intelligenceValue
 import numpy as np
 from scipy import stats
 import matplotlib.pyplot as plt
+import json
+import os
+import mplcursors  # Fare etkileşimi için
 
-def visualize_saved_errors(filename,last_20Arg=0.8):
+def visualize_saved_errors(filename, last_20Arg=0.8):
     """Kaydedilmiş hata verilerini gelişmiş grafiklerle görselleştir"""
     with open(filename, 'r') as f:
         data = json.load(f)
     
     errors = np.array(data["errors"])
     epochs = np.array(data["epochs"])
+    learning_rates = np.array(data.get("learning_rates", [0.05]*len(epochs)))
     
     # Ana grafik
     plt.figure(figsize=(15, 10))
     
     # 1. Hata eğrisi (ana grafik)
-    plt.subplot(2, 2, (1, 3))  # 2 satır, 2 sütun, 1 ve 3'ü birleştir
+    ax1 = plt.subplot(2, 2, (1, 3))  # 2 satır, 2 sütun, 1 ve 3'ü birleştir
     main_plot = plt.plot(epochs, errors, 'b-', linewidth=1, label='Ortalama Hata')
-    plt.plot(epochs, errors, 'ro', markersize=1)
+    scatter1 = plt.plot(epochs, errors, 'ro', markersize=1)[0]
     
     # Eğilim çizgisi ekleme
     z = np.polyfit(epochs, errors, 3)
     p = np.poly1d(z)
-    plt.plot(epochs, p(epochs), "r--", linewidth=2, label='Eğilim Çizgisi')
+    trend_line = plt.plot(epochs, p(epochs), "r--", linewidth=2, label='Eğilim Çizgisi')[0]
     
     # Dönüm noktalarını bulma
     diff = np.diff(errors)
@@ -972,31 +946,39 @@ def visualize_saved_errors(filename,last_20Arg=0.8):
     plt.legend()
     
     # Son 20% epoch için yakınlaştırılmış grafik
-    plt.subplot(2, 2, 2)
+    ax2 = plt.subplot(2, 2, 2)
     last_20 = int(len(epochs) * last_20Arg)
-    plt.plot(epochs[last_20:], errors[last_20:], 'b-', linewidth=1.5)
-    plt.plot(epochs[last_20:], errors[last_20:], 'ro', markersize=2)
+    line2 = plt.plot(epochs[last_20:], errors[last_20:], 'b-', linewidth=1.5)[0]
+    scatter2 = plt.plot(epochs[last_20:], errors[last_20:], 'ro', markersize=2)[0]
     
     # Son bölüm için lineer regresyon
     slope, intercept, r_value, p_value, std_err = stats.linregress(
         epochs[last_20:], errors[last_20:])
-    plt.plot(epochs[last_20:], intercept + slope*epochs[last_20:], 
+    reg_line = plt.plot(epochs[last_20:], intercept + slope*epochs[last_20:], 
              'g--', linewidth=2, 
-             label=f'Eğim: {slope:.2e}\nR²: {r_value**2:.2f}')
+             label=f'Eğim: {slope:.2e}\nR²: {r_value**2:.2f}')[0]
     
-    plt.title(f'Son %{100-last_20Arg*100} Epoch Yakınlaştırma')
+    plt.title(f'Son %{int(100-last_20Arg*100)} Epoch Yakınlaştırma')
     plt.xlabel('Epoch')
     plt.ylabel('Hata')
     plt.grid(True, linestyle='--', alpha=0.7)
     plt.legend()
     
-    # Hata dağılımı histogramı
-    plt.subplot(2, 2, 4)
-    plt.hist(errors, bins=30, color='blue', edgecolor='black', alpha=0.7)
-    plt.title('Hata Dağılımı')
-    plt.xlabel('Hata Değeri')
-    plt.ylabel('Frekans')
+    # Learning Rate Değişimi Grafiği
+    ax3 = plt.subplot(2, 2, 4)
+    lr_line = plt.plot(epochs, learning_rates, 'm-', linewidth=1.5, label='Learning Rate')[0]
+    lr_scatter = plt.plot(epochs, learning_rates, 'co', markersize=2)[0]
+    
+    # Learning rate için eğilim çizgisi
+    z_lr = np.polyfit(epochs, learning_rates, 1)
+    p_lr = np.poly1d(z_lr)
+    plt.plot(epochs, p_lr(epochs), "k--", linewidth=1, label=f'Eğilim: {z_lr[0]:.2e}x + {z_lr[1]:.2f}')
+    
+    plt.title('Learning Rate Değişimi')
+    plt.xlabel('Epoch')
+    plt.ylabel('Learning Rate')
     plt.grid(True, linestyle='--', alpha=0.7)
+    plt.legend()
     
     # Genel bilgiler
     stats_text = (
@@ -1006,6 +988,8 @@ def visualize_saved_errors(filename,last_20Arg=0.8):
         f"Ortalama Hata: {np.mean(errors):.6f}\n"
         f"Standart Sapma: {np.std(errors):.6f}\n"
         f"Dönüm Noktaları: {len(turning_points)}\n"
+        f"Başlangıç LR: {learning_rates[0]:.6f}\n"
+        f"Son LR: {learning_rates[-1]:.6f}\n"
         f"Toplam Epoch: {len(epochs)}\n"
         f"Toplam Süre: {data['total_time_seconds']:.2f} sn"
     )
@@ -1018,13 +1002,31 @@ def visualize_saved_errors(filename,last_20Arg=0.8):
     # Grafiği kaydet
     output_file = os.path.splitext(filename)[0] + "_advanced_viz.png"
     plt.savefig(output_file, dpi=300, bbox_inches='tight')
-    plt.close()
     
     print(f"Gelişmiş hata grafiği {output_file} dosyasına kaydedildi.")
     
     # Eğilim analizi
-    analyze_trend(errors, epochs,last_20Arg=last_20Arg)
+    analyze_trend(errors, epochs, last_20Arg=last_20Arg)
     
+    # Fare etkileşimi ekleme
+    def format_annotation(sel):
+        x, y = sel.target
+        epoch = int(x)
+        if sel.artist in [scatter1, scatter2]:  # Hata grafiklerindeki noktalar
+            error = y
+            sel.annotation.set_text(f"Epoch: {epoch}\nHata: {error:.6f}")
+        elif sel.artist == lr_scatter:  # Learning rate grafiğindeki noktalar
+            lr = y
+            sel.annotation.set_text(f"Epoch: {epoch}\nLearning Rate: {lr:.6f}")
+        sel.annotation.get_bbox_patch().set(fc="white", alpha=0.9)
+    
+    # Tüm grafikler için cursor ekle
+    crs1 = mplcursors.cursor([scatter1, scatter2, lr_scatter], hover=True)
+    crs1.connect("add", format_annotation)
+    if debug:
+        plt.show(block=True)
+    else:
+        plt.show()
 
 def analyze_trend(errors, epochs,last_20Arg):
     """Hata eğilimini analiz eder ve yorumlar"""
@@ -1255,6 +1257,47 @@ class CorticalColumn:
         }
         self._append_to_log(log_entry)
 
+    def calculate_slope(self, error_history, start_epoch=None, end_epoch=None):
+        """
+        Belirtilen epoch aralığındaki hata değerlerinin eğimini hesaplar
+
+        Parametreler:
+        error_history (list): Hata değerlerinin listesi
+        start_epoch (int): Başlangıç epoch indeksi (None ise son %20'nin başlangıcı)
+        end_epoch (int): Bitiş epoch indeksi (None ise son epoch)
+
+        Returns:
+        float: Hata eğimi (pozitif = hatalar artıyor, negatif = hatalar azalıyor)
+        float: R² değeri (eğimin güvenilirliği, 1'e yakın = güvenilir)
+        """
+        if not error_history or len(error_history) < 2:
+            return 0.0, 0.0
+
+        # Varsayılan aralıkları ayarla
+        if start_epoch is None:
+            start_epoch = int(len(error_history) * 0.8)  # Son %20'nin başlangıcı
+        if end_epoch is None:
+            end_epoch = len(error_history) - 1  # Son epoch
+
+        # Geçerli aralığı kontrol et
+        start_epoch = max(0, min(start_epoch, len(error_history)-1))
+        end_epoch = max(0, min(end_epoch, len(error_history)-1))
+
+        if start_epoch >= end_epoch:
+            return 0.0, 0.0
+
+        # Seçilen aralıktaki hata ve epoch değerlerini al
+        selected_errors = error_history[start_epoch:end_epoch+1]
+        epochs = list(range(start_epoch, end_epoch+1))
+
+        # Lineer regresyon ile eğim ve R² değerini hesapla
+        slope, intercept, r_value, _, _ = stats.linregress(epochs, selected_errors)
+        r_squared = r_value**2
+
+        return slope, r_squared
+
+
+
     def monitor_network(self, avg_error):
         """
         Eğitim sırasında loss değerlerini gözlemleyip learning rate’i günceller.
@@ -1263,7 +1306,17 @@ class CorticalColumn:
         # Eğer self.loss_history kullanılıyorsa:
         self.loss_history.append(avg_error)
 
-                # Cooldown süresini kontrol et
+        if len(self.loss_history)%100 == 0 and debug:
+            lastSlopeCount=100
+            slope,r_square=self.calculate_slope(self.loss_history, start_epoch=len(self.loss_history)-lastSlopeCount, end_epoch=None)
+                        
+            self.log_change(f'[DEBUG] last {lastSlopeCount} slope', {
+                    'slope':slope,
+                    'r_square':r_square
+            })
+        
+        
+        # Cooldown süresini kontrol et
         if self.current_epoch - self.last_lr_change_epoch >= self.lr_cooldown_period:
             new_lr = self.update_learning_rate(
                 self.learningRate, 
@@ -1281,8 +1334,8 @@ class CorticalColumn:
 
 
     def update_learning_rate(self, current_lr, loss_history, 
-                         patience=100, min_lr=1e-10, max_lr=10,
-                         factor=0.1, threshold=1e-3, increase_threshold=0.0001):
+                         patience=10, min_lr=1e-10, max_lr=10,
+                         factor=0.02, threshold=1e-10, increase_threshold=0.01):
         """
         loss_history: Son epoch'lardaki loss değerlerini tutan liste.
         patience: Bu kadar epoch boyunca anlamlı bir iyileşme yoksa LR güncelle.
@@ -1312,7 +1365,9 @@ class CorticalColumn:
             self.log_change('lr down', {
                     'before lr': current_lr,
                     'new lr':new_lr,
-                    'change': new_lr-current_lr  
+                    'change': new_lr-current_lr,
+                    'factor':factor,
+                    'reason':f"improvent: {improvement} < thresold: {threshold}" 
                 })
             print(f"Learning rate azaltıldı: {current_lr:.6f} -> {new_lr:.6f} (iyileşme: {improvement:.4f})")
             return new_lr
@@ -1335,7 +1390,7 @@ class CorticalColumn:
                     'new_lr': new_lr,
                     'change': new_lr - current_lr,
                     'reduction_factor': strong_reduction_factor,
-                    'reason': 'max_limit_reached'
+                    'reason': f'max_limit_reached , before:{current_lr:.6f}'
                 })
                 return new_lr
             else:
@@ -1345,7 +1400,8 @@ class CorticalColumn:
                 self.log_change('lr up', {
                     'before lr': current_lr,
                     'new lr':new_lr,
-                    'change': new_lr-current_lr  # İlk 10 güncellemeyi göster (performans için)
+                    'change': new_lr-current_lr,  # İlk 10 güncellemeyi göster (performans için)
+                    'reason':f"before: {current_lr:.9f} < limit: {max_lr * 0.999:.9f} and improvement: {improvement} > increase_threshold: {increase_threshold}"
                     })
                 return new_lr
 
