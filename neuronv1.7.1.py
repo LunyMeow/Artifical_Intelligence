@@ -92,7 +92,7 @@ class Connection:
 visualizeNetwork =False
 debug = True  # Global debug değişkeni
 #cmd = "train_custom(veri.csv;2,5,2;0.0004)" #program başlar başlamaz çalışacak ilk komut
-cmd="train_custom(parity_problem.csv;4,4,1;0.0001;1;3)"
+cmd="train_custom(parity_problem.csv;4,15,5,1;0.0001;1;3)"
 
 
 # Ağ oluşturma
@@ -1251,8 +1251,8 @@ class CorticalColumn:
             'details': details,
             'network_state': {
                 'layer_sizes': [len(layer) for layer in layers],
-                'total_neurons': sum(len(layer) for layer in layers),
-                'total_connections': sum(conns for conns in connections)
+                'total_neurons': sum(len(layer) for layer in layers)
+                
             }
         }
         self._append_to_log(log_entry)
