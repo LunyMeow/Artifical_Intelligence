@@ -92,7 +92,7 @@ class Connection:
 visualizeNetwork =False
 debug = True  # Global debug değişkeni
 #cmd = "train_custom(veri.csv;2,5,2;0.0004)" #program başlar başlamaz çalışacak ilk komut
-cmd="train_custom(parity_problem.csv;4,3,1;100;1;3)"
+cmd="train_custom(parity_problem.csv;4,4,1;0.0001;1;3)"
 
 
 # Ağ oluşturma
@@ -1335,7 +1335,7 @@ class CorticalColumn:
 
     def update_learning_rate(self, current_lr, loss_history, 
                          patience=10, min_lr=1e-10, max_lr=10,
-                         factor=0.02, threshold=1e-10, increase_threshold=0.01):
+                         factor=0.02, threshold=1e-10, increase_threshold=0.00001):
         """
         loss_history: Son epoch'lardaki loss değerlerini tutan liste.
         patience: Bu kadar epoch boyunca anlamlı bir iyileşme yoksa LR güncelle.
