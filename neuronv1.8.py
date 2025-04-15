@@ -93,7 +93,7 @@ visualizeNetwork =False
 debug = True  # Global debug değişkeni
 #cmd = "train_custom(veri.csv;2,5,2;0.0004)" #program başlar başlamaz çalışacak ilk komut
 #cmd="train_custom(veri.csv;2,5,3,2;0.001;1;3)"
-cmd="train_custom(parity_problem.csv;4,5,2;0.01;1;3)"
+cmd="train_custom(parity_problem.csv;4,6,2;0.0003;1;3)"
 
 
 # Ağ oluşturma
@@ -737,167 +737,106 @@ def save_and_plot_errors():
     return outputFolder+output_file_json
 
 def train_network(X_train, y_train, batch_size=1, epochs=None, intelligenceValue=None, learning_rate=0.05, output_graph=enable_logging):
-    global error_history, epoch_history, start_time, enable_logging,learning_rate_history
-    
-    # Loglama ayarını güncelle
-    #enable_logging = output_graph
+    global error_history, epoch_history, start_time, enable_logging, learning_rate_history
     
     if enable_logging:
-        print("Hata grafiği kaydı etkin. Eğitim sonunda veya Ctrl+C ile çıkış yaptığınızda grafik oluşturulacak.")
+        print("Hata grafiği kaydı etkin. Eğitim sonunda grafik oluşturulacak.")
     
-    # Hata geçmişi ve epoch geçmişini sıfırla
     error_history = []
     epoch_history = []
-    learning_rate_history=[]
-    newLR=0.0
+    learning_rate_history = []
+    newLR = 0.0
     
-    # Ctrl+C sinyalini yakalamak için handler kaydet
     signal.signal(signal.SIGINT, signal_handler)
     
-    # Kortikal kolon oluştur
-    cortical_column = CorticalColumn(learning_rateArg=learning_rate)
+    cortical_column = CorticalColumn(learning_rateArg=learning_rate, targetError=epochs if epochs <1 else None)
     
     avg_error = float('inf')
     epoch = 0
     total_samples = len(X_train)
     start_time = time.time()
-    last_print_time = start_time
 
-    # Eğitim öncesi kontrol
     if len(layers[0]) != len(X_train[0]):
         print(f"Uyarı: Giriş boyutu uyumsuz! Ağ girişi: {len(layers[0])}, Veri girişi: {len(X_train[0])}")
-        print(layers)
-        print(X_train)
         return
 
     try:
-        # Eğitim döngüsü
         while True:
-            cortical_column.current_epoch = epoch #her logdan önce epoch değeri yazılıyor her epochta epoch değeri yazılıyor yani logdaki değişiklikler o epochu gösteriyor. yani 30. epochda lr değişti logu varsa o epochta backpropagationa girilmeden önce lr değiştirilmiştir 
-            #yani logdaki ortalama hata değeri eğer lr değiştirilmişse backpropagation yapılmadan önceki hata değeridir bir sonraki log o lr ye göre backpropagation yapılıp hata yazılmıştır
+            cortical_column.current_epoch = epoch
             total_error = 0
             processed_samples = 0
-            epoch_gradients = []  # Gradyanları topla
-            korteksChanges=[]
+            epoch_gradients = []
+            korteksChanges = []
             
-            # Batch işleme
-            newLR=cortical_column.monitor_network(avg_error) #burası learning rate değiştiriyor
+            newLR,_ = cortical_column.monitor_network(avg_error)
+            if _ is not None:
+                epochs = _
 
             for batch_start in range(0, total_samples, batch_size):
-                
                 batch_end = min(batch_start + batch_size, total_samples)
                 X_batch = X_train[batch_start:batch_end]
                 y_batch = y_train[batch_start:batch_end]
                 batch_error = 0
                 
                 for X, y in zip(X_batch, y_batch):
-                    cortical_column.backpropagation(X,y)
-                    
-
-                    # Hata hesapla
+                    cortical_column.backpropagation(X, y)
                     output = [neuron.value for neuron in layers[-1][:len(y)]]
                     error = hata_payi(y, output)
                     batch_error += error
-                    
-                    # Gradyanları hesapla
-
-                    
-                    
-                    
-                    
-                    cortical_column.adapt_neurons()
-                    cortical_column._adapt_connections()
-
-                    
-
-                    
                 
-                
-                # Batch istatistikleri
                 batch_error /= len(X_batch)
                 total_error += batch_error * len(X_batch)
                 processed_samples += len(X_batch)
-                
-                # Ortalama hatayı güncelle
                 avg_error = total_error / processed_samples
-
-
                 
+                # SADECE BATCH SONUNDA LOGLAMA
+                elapsed_time = time.time() - start_time
+                samples_per_sec = processed_samples / elapsed_time if elapsed_time > 0 else 0
+                remaining_time = (total_samples - processed_samples) / samples_per_sec if samples_per_sec > 0 else 0
+                
+                print(f"\nEpoch {epoch+1}/{epochs if epochs is not None else '∞'} - İlerleme: {processed_samples}/{total_samples} ({100*processed_samples/total_samples:.1f}%)")
+                print(f"Ortalama Hata: {avg_error:.6f}")
+                print(f"Geçen Süre: {elapsed_time/60:.1f} dak - Tahmini Kalan Süre: {remaining_time/60:.1f} dak")
+                print(f"Örnek/Saniye: {samples_per_sec:.1f}")
 
-                    
-                # İlerleme raporu
-                current_time = time.time()
-                if current_time - last_print_time > 10 or batch_end >= total_samples:
-                    elapsed_time = current_time - start_time
-                    samples_per_sec = processed_samples / elapsed_time if elapsed_time > 0 else 0
-                    remaining_time = (total_samples - processed_samples) / samples_per_sec if samples_per_sec > 0 else 0
-                    
-                    print(f"\nEpoch {epoch+1}/{epochs if epochs else '∞'} - İlerleme: {processed_samples}/{total_samples} ({100*processed_samples/total_samples:.1f}%)")
-                    print(f"Ortalama Hata: {avg_error:.6f}")
-                    print(f"Geçen Süre: {elapsed_time/60:.1f} dak - Tahmini Kalan Süre: {remaining_time/60:.1f} dak")
-                    print(f"Örnek/Saniye: {samples_per_sec:.1f}")
-                    
-                    # Eğer loglama etkinse, hata değerini kaydet (ara dosya oluşturmadan)
-                    if enable_logging:
-                        error_history.append(avg_error)
-                        epoch_history.append(epoch + processed_samples/total_samples)
-                        learning_rate_history.append(newLR)
-                    
-                    last_print_time = current_time
-                                    # IntelligenceValue kontrolü (her batch sonunda)
+            if enable_logging:
+                    error_history.append(avg_error)
+                    epoch_history.append(epoch + processed_samples/total_samples)
+                    learning_rate_history.append(newLR)   
+                
             
-            
-            
-            
-            if ((epochs > 1 and epoch >= epochs) or(epochs <1 and epochs>avg_error)) or stopEpoch == True:
+            if ((epochs > 1 and epoch >= epochs) or (epochs <1 and epochs>avg_error)) or stopEpoch == True:
                 if epoch % 50 == 0 and debug:
                     cortical_column.log_change('epoch_summary', {
                         'average_error': avg_error,
                         'batch_progress': processed_samples/total_samples
-                        
                     })
-                
                 break
             
-
-            
-            # Epoch sonu işlemleri
             epoch += 1
-            
         
-
-            
-
-        
-        # Final raporu
         total_time = time.time() - start_time
         print(f"\n=== EĞİTİM TAMAMLANDI ===")
-        print(f"Toplam Değişiklik: {len(korteksChanges)}")
         print(f"Toplam Süre: {total_time/60:.1f} dakika | Toplam saniye: {total_time:.3f}")
         print(f"Son Hata: {avg_error:.6f}")
         print(f"Toplam Epoch: {epoch}")
         print(f"Final Ağ Yapısı: {[len(layer) for layer in layers]}")
 
-        
-        # Eğitim tamamlandığında hata verilerini kaydet ve görselleştir (eğer loglama etkinse)
         if enable_logging:
             visualize_saved_errors(save_and_plot_errors())
         
     except KeyboardInterrupt:
-        # Ctrl+C ile çıkış yakalandı, signal handler zaten işleyecek
         pass
     except Exception as e:
         if debug:
             cortical_column.log_change('training_error', {
-            'error_type': str(type(e)),
-            'message': str(e),
-            'last_epoch': epoch
+                'error_type': str(type(e)),
+                'message': str(e),
+                'last_epoch': epoch
             })
         raise
     
     return cortical_column, avg_error
-
-
 
 
 import numpy as np
@@ -1207,10 +1146,15 @@ def enable_all_biases():
                └─► Hayır → [Devam]
     """
 
+def is_multiple(a, b):
+    return a % b == 0 if b != 0 else False
+
 class CorticalColumn:
     
-    def __init__(self, log_file="network_changes.log", learning_rateArg=0.3):
+    def __init__(self, log_file="network_changes.log", learning_rateArg=0.3,targetError=None):
         global layers, connections
+        
+        self.firstLearningRate = learning_rateArg
         self.learningRate = learning_rateArg
         self.neuronHealtThreshould = 0.3
         self.change_log = []  # Değişiklik loglarını tutacak liste
@@ -1220,11 +1164,13 @@ class CorticalColumn:
         # Loss history'yi de burada tutmak isterseniz:
         self.loss_history = []
 
-        self.lr_cooldown =0
-        self.lr_cooldown_period=50
+        self.lr_cooldown = 0
+        self.lr_cooldown_period = 20  # Increased from 10
         self.last_lr_change_epoch = -float('inf')
-        self.lrChanged=0
+        self.lrChanged = 0
 
+        self.maxEpochForTargetError=500
+        self.targetError=targetError
 
         # Log dosyasını başlat (varsa sil, yenisini oluştur)
         with open(self.log_file, 'w') as f:
@@ -1296,158 +1242,256 @@ class CorticalColumn:
 
         return slope, r_squared
 
-
-
     def monitor_network(self, avg_error):
         """
-        Eğitim sırasında loss değerlerini gözlemleyip learning rate’i günceller.
-        Bu örnekte, global error_history listesini veya self.loss_history’yi kullanabilirsiniz.
+        Enhanced monitoring with plateau detection and improved learning rate adjustments.
+        This function analyzes error trends to manage learning rate changes for optimal training.
         """
-        # Eğer self.loss_history kullanılıyorsa:
+        # Add the current error to history
         self.loss_history.append(avg_error)
+        window_size = min(20, len(self.loss_history))
+        startEpoch=len(self.loss_history) - window_size
+        slope, r_square = self.calculate_slope(
+                self.loss_history, 
+                start_epoch=startEpoch, 
+                end_epoch=None
+        )
 
-        if len(self.loss_history)%100 == 0 and debug:
-            lastSlopeCount=100
-            slope,r_square=self.calculate_slope(self.loss_history, start_epoch=len(self.loss_history)-lastSlopeCount, end_epoch=None)
-                        
-            self.log_change(f'[DEBUG] last {lastSlopeCount} slope', {
-                    'slope':slope,
-                    'r_square':r_square
+        if slope<1e-6 and slope >-1e-6:
+            self.log_change('its linear now',{
+                'between':f"{startEpoch}-now",
+                'slope':slope
             })
         
-        
-        # Cooldown süresini kontrol et
-        if self.current_epoch - self.last_lr_change_epoch >= self.lr_cooldown_period:
-            new_lr = self.update_learning_rate(
-                self.learningRate, 
-                self.loss_history
-            )
+
+
+        #print(is_multiple(self.current_epoch,self.maxEpochForTargetError),slope)
+        if is_multiple(self.current_epoch,self.maxEpochForTargetError) and slope > 0:
+            minError = np.min(self.loss_history)
+            increaseValue=0.8
+            self.log_change('minimum Error Changed',{
+                'current target error':self.targetError,
+                'minimum Error':minError,
+                'now error':self.loss_history[-1],
+                'current lr':self.learningRate,
+                'first lr':self.firstLearningRate,
+                'increase value':increaseValue,
+                'now target value':minError/increaseValue
+                
+            })
+            self.learningRate = self.firstLearningRate
+            self.targetError = minError/increaseValue
+            #print("---------------------------------------------")
+            return self.learningRate,minError
             
-            # Eğer LR değiştiyse cooldown başlat
-            if new_lr != self.learningRate:
-                self.learningRate = new_lr
-                self.last_lr_change_epoch = self.current_epoch
-                if debug:
-                    print(f"LR cooldown başlatıldı. Sonraki {self.lr_cooldown_period} epoch boyunca LR değişmeyecek.")
-        
-        return self.learningRate
 
 
-    def update_learning_rate(self, current_lr, loss_history, 
-                             patience=20, min_lr=1e-5, max_lr=6,
-                             factor=0.002, threshold=1e-4, increase_threshold=1e-3):
-            """
-            loss_history: Son epoch'lardaki loss değerlerini tutan liste.
-            patience: Bu kadar epoch boyunca anlamlı bir iyileşme yoksa LR güncelle.
-            threshold: İyileşme hızının (loss azalımının) düşük sınırı. Bu değerin altındaysa LR azalt.
-            increase_threshold: İyileşme hızı bu değerin üzerinde ise LR artır.
-            factor: LR güncelleme katsayısı. Azaltmak için current_lr * factor, artırmak için current_lr / factor.
-            min_lr: LR'in alt sınırı.
-            max_lr: LR'in üst sınırı.
-            """
-            # Yeterince veri yoksa dokunma
-            if len(loss_history) < 2 * patience:
-                return current_lr
 
-            if abs(self.lrChanged) >= self.lr_cooldown_period:
-                self.log_change('lr is same changing',{
-                    'lr':self.learningRate,
-                    'lrChanged':self.lrChanged
+
+
+        # Log debug information about error trend if needed
+        if debug:
+            if len(self.loss_history) % 50 == 0 :
+                
+                self.log_change('error_trend_analysis', {
+                    'window_size': window_size,
+                    'slope': slope,
+                    'r_square': r_square,
+                    'current_lr': self.learningRate,
                 })
+        
+        
+        
+        # Check if we can update learning rate (not in cooldown period)
+        if self.current_epoch - self.last_lr_change_epoch >= self.lr_cooldown_period:
+            # Apply a small automatic decay to prevent stagnation (0.9995^1000 ≈ 0.61, so gradual)
+            # This helps ensure the learning rate doesn't stay too high for too long
+            
+            # Get new learning rate based on loss trend
+            new_lr = self.update_learning_rate(self.learningRate, self.loss_history,slopeArg=slope)
+            
+            # If learning rate changed significantly, reset cooldown counter
 
-            # Son 'patience' epoch'un ortalama loss'unu al
-            recent_losses = loss_history[-patience:]
-            previous_losses = loss_history[-(2 * patience):-patience]
+            self.learningRate = new_lr
+            self.last_lr_change_epoch = self.current_epoch
 
-            avg_old = sum(previous_losses) / patience
-            avg_new = sum(recent_losses) / patience
+        
+        return self.learningRate,None
+    
+    def update_learning_rate(self, current_lr, loss_history, 
+                             patience=60, # Increased from 20
+                             min_lr=0.1, max_lr=4.0,  # Reduced max_lr
+                             factor=0.005,  # Reduced from 0.002
+                             threshold=1e-1, increase_threshold=5e-2,slopeArg=None):  # More conservative increase threshold
+        """
+        Updates learning rate based on loss history trends with improved stability.
+        
+        Parameters:
+        - current_lr: Current learning rate
+        - loss_history: History of loss values
+        - patience: Number of epochs to consider for trend analysis
+        - min_lr/max_lr: Bounds for learning rate
+        - factor: Rate of change factor for learning rate adjustments
+        - threshold: Minimum improvement threshold to maintain current lr
+        - increase_threshold: Threshold to consider increasing lr
+        
+        Returns:
+        - Updated learning rate value
+        """
 
-            improvement = (avg_old - avg_new) / avg_old  # Göreceli iyileşme
 
-            # İyileşme miktarı threshold'un altında ise -> LR'i düşür
-            if improvement < threshold:
-                # Eğer lr zaten min sınırına yakınsa, güçlü yükseltme yap
-                if current_lr <= min_lr * 1.001:
-                    strong_increase_factor = 1 / (factor * 10)  # Örneğin 1/(0.01*10) = 10
-                    new_lr = current_lr * strong_increase_factor  # Güçlü artırma
-                    new_lr = min(new_lr, max_lr)  # Max sınırın üstüne çıkmamasını sağla
 
-                    print(f"Min sınırına ulaşıldı. Learning rate güçlü şekilde artırıldı: "
-                          f"{current_lr:.6f} -> {new_lr:.6f} (iyileşme: {improvement:.4f}, "
-                          f"artırma faktörü: {strong_increase_factor:.4f})")
 
-                    self.log_change('lr strong up', {
-                        'before_lr': current_lr,
-                        'new_lr': new_lr,
-                        'change': new_lr - current_lr,
-                        'increase_factor': strong_increase_factor,
-                        'lrChanged': self.lrChanged,
-                        'reason': f'min_limit_reached , before:{current_lr:.6f}'
-                    })
-                    self.lrChanged = 0
-                    return new_lr
-                else:
-                    new_lr = current_lr * (1 - factor)  # Örneğin: 0.01 * 0.998 = 0.00998 (%0.2 azalma)
-                    new_lr = max(new_lr, min_lr)
-                    self.log_change('lr down', {
-                            'before lr': current_lr,
-                            'new lr': new_lr,
-                            'change': new_lr-current_lr,
-                            'factor': factor,
-                            'lrChanged': self.lrChanged,
-                            'reason': f"improvent: {improvement} < thresold: {threshold}" 
-                        })
-                    if self.lrChanged <= 0:
-                        self.lrChanged -= 1
-                    else:
-                        self.lrChanged = 0
-                    print(f"Learning rate azaltıldı: {current_lr:.6f} -> {new_lr:.6f} (iyileşme: {improvement:.4f})")
-                    return new_lr
-
-            # İyileşme çok yüksekse -> LR'i artırmayı düşün
-            elif improvement > increase_threshold:
-                # Eğer lr zaten max sınırına yakınsa, güçlü azaltma yap
-                if current_lr >= max_lr * 0.999:
-                    strong_reduction_factor = factor * 50  # Örneğin 0.01*10 = 0.1
-                    new_lr = current_lr * (1 - strong_reduction_factor)  # Güçlü azaltma
-                    new_lr = max(new_lr, min_lr)  # Min sınırın altına düşmemesini sağla
-
-                    print(f"Max sınırına ulaşıldı. Learning rate güçlü şekilde azaltıldı: "
-                          f"{current_lr:.6f} -> {new_lr:.6f} (iyileşme: {improvement:.4f}, "
-                          f"azaltma faktörü: {strong_reduction_factor:.4f})")
-
-                    self.log_change('lr strong down', {
-                        'before_lr': current_lr,
-                        'new_lr': new_lr,
-                        'change': new_lr - current_lr,
-                        'reduction_factor': strong_reduction_factor,
-                        'lrChanged': self.lrChanged,
-                        'reason': f'max_limit_reached , before:{current_lr:.6f}'
-                    })
-                    self.lrChanged = 0
-                    return new_lr
-                else:
-                    new_lr = current_lr * (1 + factor)  # Örneğin: 0.01 * 1.002 = 0.01002 (%0.2 artış)
-                    new_lr = min(new_lr, max_lr)
-                    print(f"Learning rate artırıldı: {current_lr:.6f} -> {new_lr:.6f} (iyileşme: {improvement:.4f})")
-                    self.log_change('lr up', {
-                        'before lr': current_lr,
-                        'new lr': new_lr,
-                        'change': new_lr-current_lr,
-                        'lrChanged': self.lrChanged,
-                        'reason': f"before: {current_lr:.9f} < limit: {max_lr * 0.999:.9f} and improvement: {improvement} > increase_threshold: {increase_threshold}"
-                    })
-                    if self.lrChanged >= 0:
-                        self.lrChanged += 1
-                    else:
-                        self.lrChanged = 0
-                    return new_lr
-
-            # Aksi durumda, lr sabit kalır
-            print(f"Learning rate aynı kaldı: {current_lr:.6f} (iyileşme: {improvement:.4f})")
+        # Return current_lr if we don't have enough data
+        if len(loss_history) < 2 * patience:
             return current_lr
+        
+            # Yeni: Gradyan Stabilizasyonu
+        if abs(slopeArg) > 0.1:  # Ani hata değişimlerinde
+            emergency_factor = 0.2 if slopeArg > 0 else 0.1
+            new_lr = current_lr * (1 - emergency_factor)
+            self.log_change('emergency change bc slope',{
+                'slope':slopeArg,
+                'emergency_factor':emergency_factor,
+                'old_lr':current_lr,
+                'new_lr':new_lr,
+                'change':new_lr-current_lr
 
-
+            })
+            return max(new_lr, min_lr)
+        
+        # Analyze recent and previous loss trends
+        recent_losses = loss_history[-patience:]
+        previous_losses = loss_history[-(2 * patience):-patience]
+        
+        # Yeni: Cosine Annealing Esintili Decay
+        cosine_decay = 0.5 * (1 + math.cos(math.pi * self.current_epoch / 1000))
+        decayed_lr = current_lr * cosine_decay
+        
+        # Calculate average losses
+        avg_old = sum(previous_losses) / patience if previous_losses else 0
+        avg_new = sum(recent_losses) / patience if recent_losses else 0
+        
+        # Calculate relative improvement
+        improvement = (avg_old - avg_new) / avg_old if avg_old != 0 else 0
+        
+        # Check for error increase (negative improvement)
+        if improvement < -0.01:  # More sensitive to error increases (1% worsening)
+            # Error is increasing - reduce learning rate more aggressively
+            reduction_factor = factor * 3  # More aggressive reduction than before
+            new_lr = current_lr * (1 - reduction_factor)
+            new_lr = max(new_lr, min_lr)
+            
+            self.log_change('lr_emergency_reduction', {
+                'before_lr': current_lr,
+                'new_lr': new_lr,
+                'change': new_lr - current_lr,
+                'reason': f"Error increasing: improvement={improvement}",
+                'lrChanged': self.lrChanged
+            })
+            
+            # Reset change counter when we make an emergency reduction
+            self.lrChanged = -1
+            
+            print(f"Error increasing! Learning rate reduced: {current_lr:.6f} -> {new_lr:.6f}")
+            return new_lr
+        
+        # Case 1: Insufficient improvement - reduce learning rate
+        if improvement < threshold:
+            # Check if we're at minimum learning rate already
+            if current_lr <= min_lr * 1.01:
+                # At minimum, try a small increase to escape potential local minimum
+                # Less aggressive than before
+                small_increase_factor = 1.5  # Was 1/(factor*10) which was too large
+                new_lr = current_lr * small_increase_factor
+                new_lr = min(new_lr, max_lr)
+                
+                self.log_change('lr_small_up', {
+                    'before_lr': current_lr,
+                    'new_lr': new_lr,
+                    'change': new_lr - current_lr,
+                    'increase_factor': small_increase_factor,
+                    'reason': f'min_limit_reached, trying escape',
+                    'lrChanged': self.lrChanged
+                })
+                
+                self.lrChanged = 0  # Reset change counter
+                print(f"Min limit reached. Learning rate slightly increased: {current_lr:.6f} -> {new_lr:.6f}")
+                return new_lr
+            else:
+                # Standard reduction
+                new_lr = current_lr * (1 - factor)
+                new_lr = max(new_lr, min_lr)
+                
+                self.log_change('lr_down', {
+                    'before_lr': current_lr,
+                    'new_lr': new_lr,
+                    'change': new_lr - current_lr,
+                    'factor': factor,
+                    'reason': f"improvement: {improvement:.6f} < threshold: {threshold}",
+                    'lrChanged': self.lrChanged
+                })
+                
+                # Track consecutive decreases
+                if self.lrChanged <= 0:
+                    self.lrChanged -= 1
+                else:
+                    self.lrChanged = -1
+                    
+                print(f"Learning rate reduced: {current_lr:.6f} -> {new_lr:.6f} (improvement: {improvement:.6f})")
+                return new_lr
+        
+        # Case 2: Strong improvement - consider increasing learning rate
+        elif improvement > increase_threshold:
+            # Check if we're at maximum learning rate already
+            if current_lr >= max_lr * 0.999:
+                # At maximum, try a small decrease to prevent divergence
+                reduction_factor = factor * 10  # Less aggressive than before (was 50)
+                new_lr = current_lr * (1 - reduction_factor)
+                new_lr = max(new_lr, min_lr)
+                
+                self.log_change('lr_max_down', {
+                    'before_lr': current_lr,
+                    'new_lr': new_lr,
+                    'change': new_lr - current_lr,
+                    'reduction_factor': reduction_factor,
+                    'reason': f'max_limit_reached, preventing divergence',
+                    'lrChanged': self.lrChanged
+                })
+                
+                self.lrChanged = 0  # Reset change counter
+                print(f"Max limit reached. Learning rate decreased: {current_lr:.6f} -> {new_lr:.6f}")
+                return new_lr
+            else:
+                # Standard increase, but more conservative now
+                # Adaptive factor - increase more conservatively if we're already at a high learning rate
+                adaptive_factor = factor * 0.5 * (1 - (current_lr / max_lr) * 0.8)  # More conservative increase
+                new_lr = current_lr * (1 + adaptive_factor)
+                new_lr = min(new_lr, max_lr)
+                
+                self.log_change('lr_up', {
+                    'before_lr': current_lr,
+                    'new_lr': new_lr,
+                    'change': new_lr - current_lr,
+                    'adaptive_factor': adaptive_factor,
+                    'reason': f"strong improvement: {improvement:.6f} > threshold: {increase_threshold}",
+                    'lrChanged': self.lrChanged
+                })
+                
+                # Track consecutive increases
+                if self.lrChanged >= 0:
+                    self.lrChanged += 1
+                else:
+                    self.lrChanged = 1
+                    
+                print(f"Learning rate increased: {current_lr:.6f} -> {new_lr:.6f} (improvement: {improvement:.6f})")
+                return new_lr
+        
+        # Case 3: Moderate improvement - maintain current learning rate with tiny decay
+        if debug:
+            print(f"Learning rate only slightly decayed: {current_lr:.6f} -> {decayed_lr:.6f} (improvement: {improvement:.6f})")
+        # Mevcut mantığı cosine decay ile birleştir
+        return max(decayed_lr * 0.99, min_lr)  # Ekstra yavaş decay
 
     def backpropagation(self,input_data, target_data):
         global layers, connections
@@ -1550,20 +1594,19 @@ class CorticalColumn:
 
         return total_error
         
-        
-
-
-
     def adapt_neurons(self):
-        global layers,connections
-        weakNeurons=[]
-        # Tüm nöronların sağlığını hesapla
-        for layer_idx, layer in enumerate(layers):
-            
-            for neuron_idx, neuron in enumerate(layer):
-                neuron,health = self.calculate_neuron_health(neuron)
-                if health < self.neuronHealtThreshould:
-                    weakNeurons.append(neuron)
+        weakNeurons = super().adapt_neurons()
+
+        # Yeni: Kritik nöronları koruma
+        protected_ids = [n.id for layer in layers for n in layer[:2]]  # İlk 2 nöronu koru
+        weakNeurons = [n for n in weakNeurons if n.id not in protected_ids]
+
+        # Yeni: Health threshold'u dinamik yap
+        self.neuronHealtThreshould = 0.2 + 0.1 * math.sin(self.current_epoch/100)
+
+        # Zayıf nöronları kademeli sil
+        for neuron in weakNeurons[:int(len(weakNeurons)*0.3)]:  # En kötü %30
+            self.remove_neuron_from_layer(neuron_id=neuron.id)
                 
     def _adapt_connections(self):
         global layers,connections
@@ -1746,8 +1789,6 @@ class CorticalColumn:
             print(f"Katman {layer_index}'den nöron (ID: {neuron_id}) silindi.")
 
         return True
-
-
 
 
 # Terminal giriş döngüsü - Dinamik versiyon
