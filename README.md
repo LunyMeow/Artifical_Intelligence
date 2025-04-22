@@ -32,15 +32,6 @@ Artifical_Intelligence/
 
 Corteks sınıfı, yapay zekanın kendi nöral yapısını öğrenme sürecine göre yeniden yapılandırmasını sağlar. Bu, modelin performansını artırmak için katman sayısını ve nöron yapılarını dinamik olarak ayarlamasına olanak tanır.
 
-class Corteks:
-    def __init__(self, initial_structure):
-        self.structure = initial_structure
-
-    def adapt_structure(self, performance_metrics):
-        # Performansa göre yapıyı güncelle
-        if performance_metrics['accuracy'] < 0.8:
-            self.structure['layers'] += 1
-        # Diğer yapılandırma kuralları...
 
 🛠️ Kurulum ve Kullanım
 
