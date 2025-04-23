@@ -1,10 +1,10 @@
 import csv
+import random
 import time
 import traceback
 from typing import Dict, List, Optional
 import matplotlib.pyplot as plt
 from matplotlib.widgets import Button
-import random
 import math
 
 from matplotlib.colors import Normalize
@@ -25,7 +25,7 @@ from pyqtgraph.Qt import QtWidgets
 class Neuron:
     next_id = 0  # Global olarak artan ID değeri
     
-    def __init__(self, default_value:float=0.0, activation_type='sigmoid'):
+    def __init__(self, default_value:float=0.0, activation_type=None):
         self.value = default_value
 
         self.id = Neuron.next_id  # Otomatik ID ata
@@ -40,8 +40,7 @@ class Neuron:
             return 1 / (1 + np.exp(-x))
         elif self.activation_type == 'tanh':
             return np.tanh(x)
-        elif self.activation_type == 'relu':
-            return max(0, x)
+
         else:
             raise ValueError(f"Unknown activation type: {self.activation_type}")
 
@@ -52,8 +51,7 @@ class Neuron:
             return safe_output * (1 - safe_output)  # f'(x) = f(x)(1 - f(x))
         elif self.activation_type == 'tanh':
             return 1 - self.output ** 2  # f'(x) = 1 - f(x)^2
-        elif self.activation_type == 'relu':
-            return 1 if self.weightedSum > 0 else 0  # ReLU türevi
+
         else:
             raise ValueError(f"Unknown activation type: {self.activation_type}")
 
@@ -93,15 +91,22 @@ visualizeNetwork =False
 debug = True  # Global debug değişkeni
 #cmd = "train_custom(veri.csv;2,5,2;0.0004)" #program başlar başlamaz çalışacak ilk komut
 #cmd="train_custom(veri.csv;2,5,3,2;0.001;1;3)"
-cmd="train_custom(parity_problem.csv;4,6,2;0.0003;1;3)"
+cmd="train_custom(parity_problem.csv;4,6,2;0.001;1;3)"
+
+if debug:
+    print("Debug değeri açık cmd komutları kaydedilecek.")
+    cmdHistory=[]
+    cmdHistory.append(cmd)
 
 
 # Ağ oluşturma
 randomMinWeight = -2.0
 randomMaxWeight = 2.0
 
-activation_types = ['sigmoid', 'tanh', 'relu']
-defaultNeuronActivationType='relu'
+
+
+activation_types = ['sigmoid', 'tanh']
+defaultNeuronActivationType='tanh'
 
 
 
@@ -156,13 +161,13 @@ def setLayers(neuronInLayers):
     global layers  # Global layers listesini kullanacağımızı belirtiyoruz
     layers.clear()  # Önceki katmanları temizle
     
-    for neuronCount in neuronInLayers:
+    for layerIndex,neuronCount in enumerate(neuronInLayers):
 
         # Her katman için yeni nöron listesi oluştur
-        layer = [Neuron(default_value=1) for _ in range(neuronCount)]
+        layer = [Neuron(default_value=1,activation_type= "sigmoid" if layerIndex == len(neuronInLayers) -1 else "tanh") for _ in range(neuronCount)]
         layers.append(layer)
     
-    setConnections()
+    setConnections(preserve_weights=False)
 
 
 
@@ -769,8 +774,9 @@ def train_network(X_train, y_train, batch_size=1, epochs=None, intelligenceValue
             korteksChanges = []
             
             newLR,_ = cortical_column.monitor_network(avg_error)
-            if _ is not None:
+            if _ is not None and epochs < 1 :
                 epochs = _
+                print("FUCK ı dont know this")
 
             for batch_start in range(0, total_samples, batch_size):
                 batch_end = min(batch_start + batch_size, total_samples)
@@ -798,6 +804,8 @@ def train_network(X_train, y_train, batch_size=1, epochs=None, intelligenceValue
                 print(f"Ortalama Hata: {avg_error:.6f}")
                 print(f"Geçen Süre: {elapsed_time/60:.1f} dak - Tahmini Kalan Süre: {remaining_time/60:.1f} dak")
                 print(f"Örnek/Saniye: {samples_per_sec:.1f}")
+
+
 
             if enable_logging:
                     error_history.append(avg_error)
@@ -1072,8 +1080,10 @@ def evaluate_network(X_test, y_test):
 
 
 
-
+bias_is=None
 def disable_all_biases():
+    global bias_is
+    bias_is=False
     for layer_idx in connections:
         for neuron_id in connections[layer_idx]:
             for conn in connections[layer_idx][neuron_id]:
@@ -1083,6 +1093,8 @@ def disable_all_biases():
 disable_all_biases()
 
 def enable_all_biases():
+    global bias_is
+    bias_is=True
     for layer_idx in connections:
         for neuron_id in connections[layer_idx]:
             for conn in connections[layer_idx][neuron_id]:
@@ -1149,6 +1161,48 @@ def enable_all_biases():
 def is_multiple(a, b):
     return a % b == 0 if b != 0 else False
 
+def detect_u_turn(loss_history, check_window=20, delta=1e-4):
+    """
+    Loss değerlerinin önce düştüğünü sonra yükseldiğini tespit eder.
+    
+    Args:
+        loss_history (list of float): Kayıtlı loss değerleri.
+        check_window (int): U-dönüşü kontrol etmek için geçmişteki kaç epoch’a bakılacak.
+        delta (float): Azalma ve artma algılama hassasiyeti.
+
+    Returns:
+        bool: Eğer U-dönüşü varsa True, yoksa False.
+        dict: Ek bilgiler (minimum nokta, hangi epoch’ta oldu, ortalama değişimler).
+    """
+    if len(loss_history) < 2 * check_window:
+        return False, {}
+
+    recent = loss_history[-check_window:]
+    before = loss_history[-2*check_window:-check_window]
+
+    avg_before = sum(before) / len(before)
+    avg_recent = sum(recent) / len(recent)
+
+    min_loss = min(loss_history[-2*check_window:])
+    min_index = loss_history[-2*check_window:].index(min_loss)
+    absolute_index = len(loss_history) - 2*check_window + min_index
+
+    decreasing = avg_before - min_loss > delta
+    increasing = avg_recent - min_loss > delta
+
+    u_turn_detected = decreasing and increasing
+
+    return u_turn_detected, {
+        "u_turn_detected": u_turn_detected,
+        "min_loss": min_loss,
+        "min_loss_epoch": absolute_index,
+        "avg_before": avg_before,
+        "avg_recent": avg_recent,
+        "decrease": avg_before - min_loss,
+        "increase": avg_recent - min_loss
+    }
+
+
 class CorticalColumn:
     
     def __init__(self, log_file="network_changes.log", learning_rateArg=0.3,targetError=None):
@@ -1169,7 +1223,7 @@ class CorticalColumn:
         self.last_lr_change_epoch = -float('inf')
         self.lrChanged = 0
 
-        self.maxEpochForTargetError=500
+        self.maxEpochForTargetError=1000
         self.targetError=targetError
 
         # Log dosyasını başlat (varsa sil, yenisini oluştur)
@@ -1188,6 +1242,7 @@ class CorticalColumn:
             f.write("\n")
 
     def log_change(self, change_type, details):
+        global layers
         """Değişiklikleri loglayan yardımcı fonksiyon"""
         log_entry = {
             'epoch': self.current_epoch,
@@ -1249,7 +1304,7 @@ class CorticalColumn:
         """
         # Add the current error to history
         self.loss_history.append(avg_error)
-        window_size = min(20, len(self.loss_history))
+        window_size = min(50, len(self.loss_history))
         startEpoch=len(self.loss_history) - window_size
         slope, r_square = self.calculate_slope(
                 self.loss_history, 
@@ -1266,28 +1321,25 @@ class CorticalColumn:
 
 
         #print(is_multiple(self.current_epoch,self.maxEpochForTargetError),slope)
-        if is_multiple(self.current_epoch,self.maxEpochForTargetError) and slope > 0:
+        if is_multiple(self.current_epoch+1,self.maxEpochForTargetError) and slope > -1e-7:
             minError = np.min(self.loss_history)
-            increaseValue=0.8
-            self.log_change('minimum Error Changed',{
-                'current target error':self.targetError,
-                'minimum Error':minError,
-                'now error':self.loss_history[-1],
-                'current lr':self.learningRate,
-                'first lr':self.firstLearningRate,
-                'increase value':increaseValue,
-                'now target value':minError/increaseValue
-                
-            })
+            increaseValue=0.9
+            if debug:
+                self.log_change('minimum Error Changed',{
+                    'current target error':self.targetError,
+                    'minimum Error':minError,
+                    'now error':self.loss_history[-1],
+                    'current lr':self.learningRate,
+                    'first lr':self.firstLearningRate,
+                    'increase value':increaseValue,
+                    'now target value':minError/increaseValue
+
+                })
             self.learningRate = self.firstLearningRate
             self.targetError = minError/increaseValue
             #print("---------------------------------------------")
-            return self.learningRate,minError
+            return self.learningRate,self.targetError
             
-
-
-
-
 
         # Log debug information about error trend if needed
         if debug:
@@ -1562,6 +1614,7 @@ class CorticalColumn:
                             if debug:
                                 weight_change = self.learningRate * deltas[next_layer_idx][j] * neuron.value
                                 old_weight = conn.weight
+                                #print("debug values :",weight_change,self.learningRate,deltas[next_layer_idx][j],neuron.value)
                             # Mevcut Connection sınıfınızdaki update_weight metodunu kullan
                             conn.update_weight(self.learningRate, deltas[next_layer_idx][j] * neuron.value)
                             break
@@ -1665,7 +1718,7 @@ class CorticalColumn:
                     return layer_idx
         return None
 
-    def add_neuron_to_layer(self,layer_index=None, neuron_id=None, activation_type=defaultNeuronActivationType):
+    def add_neuron_to_layer(self,layer_index=None, neuron_id=None):
         """
         Belirli bir katmana yeni bir nöron ekler ve sadece bu nöronla ilgili bağlantıları oluşturur
 
@@ -1698,7 +1751,7 @@ class CorticalColumn:
             return None
 
         # Yeni nöron oluştur
-        new_neuron = Neuron(activation_type=activation_type)
+        new_neuron = Neuron(activation_type=defaultNeuronActivationType)
 
         # Yeni nöronu katmana ekle
         layers[layer_index].append(new_neuron)
@@ -1707,7 +1760,8 @@ class CorticalColumn:
         if layer_index > 0:
             prev_layer_idx = layer_index - 1
             for prev_neuron in layers[prev_layer_idx]:
-                weight = random.uniform(randomMinWeight, randomMaxWeight)
+                weight =random.uniform(-1/np.sqrt(len(layers[layer_idx])), 
+                                    1/np.sqrt(len(layers[layer_idx])))
                 conn = Connection(connectedToArg=[prev_neuron.id, new_neuron.id], weight=weight)
 
                 if prev_neuron.id not in connections[prev_layer_idx]:
@@ -1718,7 +1772,8 @@ class CorticalColumn:
         # Sonraki katman varsa, bu nörondan sonraki katmana bağlantılar oluştur
         if layer_index < len(layers) - 1:
             for next_neuron in layers[layer_index + 1]:
-                weight = random.uniform(randomMinWeight, randomMaxWeight)
+                weight = random.uniform(-1/np.sqrt(len(layers[layer_idx])), 
+                                    1/np.sqrt(len(layers[layer_idx])))
                 conn = Connection(connectedToArg=[new_neuron.id, next_neuron.id], weight=weight)
 
                 if new_neuron.id not in connections[layer_index]:
@@ -1801,6 +1856,9 @@ while True:
         runAI()
         visualize_network(layers, connections, refresh=True)
         print(getOutput())
+    elif cmd=="history()":
+        if debug:
+            print(cmdHistory)
     elif cmd == "print_network()":
         # Ağ yapısını terminale yazdır
         print("\n=== AĞ YAPISI ===")
@@ -1846,10 +1904,18 @@ while True:
         visualizeNetwork = not visualizeNetwork
         print(f"Görselleştirme {'aktif' if visualizeNetwork else 'pasif'}")
 
+    elif cmd.startswith("bias("):
+        param=cmd[len("bias("):-1]
+        if param == "True":
+            enable_all_biases()
+        elif param == "False":
+            disable_all_biases()
+        print("Bias is :",bias_is)
 
 
 
     elif cmd.startswith("train_custom("):
+        stopEpoch = False
         try:
             params = cmd[len("train_custom("):-1].split(";")
 
@@ -1930,10 +1996,8 @@ while True:
                 raise ValueError("Eksik parametre")
 
             # Özel durumlar için kontrol
-            if parts[1] == "random":
-                values = [random.uniform(0.1, 1.0) for _ in range(len(layers[0]))]
-                print(f"Giriş katmanı rastgele değerlerle güncellendi (0.1-1.0 aralığı)")
-            elif parts[1] == "zeros":
+
+            if parts[1] == "zeros":
                 values = [0.0 for _ in range(len(layers[0]))]
                 print("Giriş katmanı sıfırlarla sıfırlandı")
             elif parts[1] == "ones":
@@ -1989,6 +2053,12 @@ while True:
         #print("- train_digits([epochs;batch;lr;test_size;intel]): Digits ile eğitim")
         print("- train_custom(dosya.csv[;epochs;batch;lr;test_size;intel]): Özel veri ile eğitim")
         print("- set_input values:giriş değerlerini belirle")
+        print("- bias(True or False) :bias değerlerini açıp kapatmaya yarıyor boş bırakılırsa açık mı kapalı mı onu veriyor")
+        print("- history() :geçmişte yazılan komutları veriyor")
         print("- exit: Programdan çık")
 
     cmd = input("\nKomut girin: ")
+    if debug:
+        if len(cmdHistory)>20:
+            cmdHistory.pop(0)
+        cmdHistory.append(cmd)
