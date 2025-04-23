@@ -1411,7 +1411,7 @@ class CorticalColumn:
         """
         # Add the current error to history
         self.loss_history.append(avg_error)
-        window_size = min(50, len(self.loss_history))
+        window_size = min(70, len(self.loss_history))
         startEpoch=len(self.loss_history) - window_size
         slope, r_square = self.calculate_slope(
                 self.loss_history, 
