@@ -102,7 +102,7 @@ visualizeNetwork =False
 debug = True  # Global debug değişkeni
 #cmd = "train_custom(veri.csv;2,5,2;0.0004)" #program başlar başlamaz çalışacak ilk komut
 #cmd="train_custom(veri.csv;2,5,3,2;0.001;1;3)"
-cmd="train_custom(parity_problem.csv;4,2,2;0.001;1;3)"
+cmd="train_custom(parity_problem.csv;4,1,2;0.001;1;3)"
 
 if debug:
     print("Debug değeri açık cmd komutları kaydedilecek.")
@@ -1998,26 +1998,97 @@ class CorticalColumn:
                         'reason': 'Overfitting pruning'
                     })
     
-    def neuron_level_optimization(self, avg_error):
+    def calculate_optimal_layer_sizes(self, input_size, output_size):
         """
-        Her katmandaki nöronları değerlendirir ve gereksiz olanları kaldırır
+        Giriş ve çıkış boyutuna göre optimal hidden layer boyutlarını hesaplar
+        """
+        # Temel kural: Hidden layer boyutu giriş ve çıkışın ortalamasından büyük olmalı
+        # ama çok büyük olmamalı
+        avg_size = (input_size + output_size) / 2
+        min_size = max(input_size, output_size) * 1.5  # En az giriş/çıkışın 1.5 katı
+        max_size = input_size * 3  # Girişin 3 katını geçmemeli
+
+        # Çok büyük girişler için (500+ gibi) farklı kurallar
+        if input_size > 100:
+            min_size = input_size * 1.2  # Girişin %20 fazlası
+            max_size = input_size * 2    # Girişin 2 katı
+
+        return {
+            'min_hidden': int(min_size),
+            'max_hidden': int(max_size),
+            'recommended': int(min(max_size, max(min_size, avg_size * 1.5)))
+        }
+
+    def detect_excessive_neurons(self, layer_idx):
+        """
+        Belirli bir katmandaki fazla nöronları tespit eder
         """
         global layers
-        
-        # Sağlık eşik değerini hataya göre dinamik olarak ayarla
+
+        if layer_idx == 0 or layer_idx == len(layers)-1:
+            return []  # Giriş/çıkış katmanlarında optimizasyon yapma
+
+        current_layer = layers[layer_idx]
+        input_size = len(layers[layer_idx-1])
+        output_size = len(layers[layer_idx+1]) if layer_idx+1 < len(layers) else 0
+
+        optimal_sizes = self.calculate_optimal_layer_sizes(input_size, output_size)
+
+        # Eğer katman boyutu makul sınırlardaysa hiçbir şey yapma
+        if (optimal_sizes['min_hidden'] <= len(current_layer) <= optimal_sizes['max_hidden']):
+            return []
+
+        # Fazla nöronları belirle
+        if len(current_layer) > optimal_sizes['max_hidden']:
+            # En az etkin nöronları bul
+            neuron_healths = []
+            for neuron in current_layer:
+                health = self.calculate_neuron_health(neuron)
+                neuron_healths.append((health, neuron))
+
+            # Sağlığa göre sırala (en düşük sağlıklı olanlar önce)
+            neuron_healths.sort(key=lambda x: x[0])
+
+            # Fazla olan nöronları seç
+            excess_count = len(current_layer) - optimal_sizes['max_hidden']
+            excess_neurons = [neuron for (health, neuron) in neuron_healths[:excess_count]]
+
+            return excess_neurons
+
+        return []
+
+    def neuron_level_optimization(self, avg_error):
+        """
+        Gelişmiş nöron seviyesinde optimizasyon:
+        - Fazla nöronları kaldırır
+        - Gereksiz nöronları temizler
+        - Eksik nöronları ekler
+        """
+        global layers
+
+        # 1. Önce katman boyutlarını optimize et
+        for layer_idx in range(1, len(layers)-1):  # Hidden layerlar için
+            excess_neurons = self.detect_excessive_neurons(layer_idx)
+            for neuron in excess_neurons:
+                self.remove_neuron_from_layer(layer_idx, neuron.id)
+                self.log_change('neuron_removed', {
+                    'neuron_id': neuron.id,
+                    'layer': layer_idx,
+                    'reason': 'Excessive neuron count'
+                })
+
+        # 2. Sonra normal sağlık kontrolü yap
         health_threshold = max(0.2, min(0.5, 0.3 * (1 + avg_error)))
-        
+
         for layer_idx, layer in enumerate(layers):
-            # Katmanın çıktı katmanı olup olmadığını kontrol et
             is_output_layer = (layer_idx == len(layers) - 1)
-            
+            is_input_layer = (layer_idx == 0)
+
             for neuron in layer[:]:  # Kopya üzerinde döngü
                 health = self.calculate_neuron_health(neuron)
-                
-                # Sağlık skoru eşik değerin altındaysa ve çıktı katmanında değilse
-                if health < health_threshold and not is_output_layer:
-                    # Nöronun son N sağlık değerini kontrol et
-                    if len(self.neuron_health_history.get(neuron.id, [])) > 3:
+
+                if health < health_threshold and not is_output_layer and not is_input_layer:
+                    if len(self.neuron_health_history.get(neuron.id, [])) >= 3:
                         last_3_health = self.neuron_health_history[neuron.id][-3:]
                         if all(h < health_threshold for h in last_3_health):
                             self.remove_neuron_from_layer(layer_idx, neuron.id)
@@ -2027,7 +2098,30 @@ class CorticalColumn:
                                 'health': health,
                                 'reason': f'Low health (<{health_threshold:.2f})'
                             })
-    
+
+        # 3. Eksik nöronları ekle
+        for layer_idx in range(1, len(layers)-1):  # Hidden layerlar için
+            current_size = len(layers[layer_idx])
+            input_size = len(layers[layer_idx-1])
+            output_size = len(layers[layer_idx+1]) if layer_idx+1 < len(layers) else 0
+
+            optimal_sizes = self.calculate_optimal_layer_sizes(input_size, output_size)
+
+            if current_size < optimal_sizes['min_hidden']:
+                needed = optimal_sizes['min_hidden'] - current_size
+                for _ in range(needed):
+                    new_neuron = Neuron(activation_type=defaultNeuronActivationType)
+                    layers[layer_idx].append(new_neuron)
+                    self.log_change('neuron_added', {
+                        'neuron_id': new_neuron.id,
+                        'layer': layer_idx,
+                        'reason': f'Layer too small (added to reach {optimal_sizes["min_hidden"]})'
+                    })
+
+        # Bağlantıları güncelle
+        setConnections(preserve_weights=True)
+
+
     def layer_level_optimization(self, avg_error):
         """
         Katmanları değerlendirir ve gereksiz olanları kaldırır
