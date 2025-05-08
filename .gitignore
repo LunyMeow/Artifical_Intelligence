@@ -1,8 +1,10 @@
 venv/
 __pycache__/
 *.pyc
+/network_changes.log
 .env
 env/
 .vscode/
 trainingDatas/
-network_changes.log
+
+Veriler/

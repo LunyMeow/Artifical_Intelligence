@@ -101,8 +101,10 @@ class Connection:
 visualizeNetwork =False
 debug = True  # Global debug değişkeni
 #cmd = "train_custom(veri.csv;2,5,2;0.0004)" #program başlar başlamaz çalışacak ilk komut
-#cmd="train_custom(veri.csv;2,5,3,2;0.001;1;3)"
-cmd="train_custom(parity_problem.csv;4,1,2;0.001;1;3)"
+cmd="train_custom(parity_problem.csv;4,1,2;0.001;1;3)" #lr değeri büyüdükçe model daha hızlı öğreniyor fakat ani yükseliişler ve alçalmalar daha fazla oluyor bu sorunu da dinamik değişen minimum istenen hata değeri özelliği çözüyor yani şuanda iyi öğrenim için yüksek lr değeri daha iyi
+#Test :fakat lr değerini büyük veriler için test etmedim büyük verilerde küçük lr değeri gerekebilir 
+#Ekleme Önerisi :lr değerinin update_learning_rate fonksiyonunda nekadar azalıp nekadar alçalmasını kontrol eden parametre factor değeri bu değer veriye bağlı olarak dinamik olarak değişirse daha iyi olabilir
+
 
 if debug:
     print("Debug değeri açık cmd komutları kaydedilecek.")

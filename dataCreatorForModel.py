@@ -1,76 +1,52 @@
-import yfinance as yf
-import csv
+import cv2
+import numpy as np
+import pandas as pd
+import os
 
-def write_to_csv(filename, dataa, input_count, target_count):
-    """
-    data: [[input1, input2, ..., target1, target2], ...]
-    input_count: kaç tane input değeri var
-    """
-    header = [f"input{i+1}" for i in range(input_count)] + ["target1", "target2"]
-    
-    with open(filename, mode='w', newline='') as file:
-        writer = csv.writer(file)
-        writer.writerow(header)
-        print(dataa)
-        writer.writerows(dataa)
+def renk_filtrele(image, lower, upper):
+    hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+    mask = cv2.inRange(hsv, lower, upper)
+    return mask
 
-    print(f"CSV dosyasına yazıldı: {filename}")
+def çizgi_eğimleri_bul(mask):
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    eğimler = []
+    for contour in contours:
+        if len(contour) >= 2:
+            [vx, vy, x, y] = cv2.fitLine(contour, cv2.DIST_L2, 0, 0.01, 0.01)
+            slope = vy / vx
+            eğimler.append(float(slope))
+    return eğimler
 
-csvData = []
-all_data = []  # Tüm veriyi tutacağız
-for i in range(1, 20):
-    startDate = f"2023-01-{i:02d}"
-    endDate = f"2023-02-{i:02d}"
+def yönü_belirle(mask):
+    # yeşil çizginin yönünü belirle
+    points = cv2.findNonZero(mask)
+    if points is None or len(points) < 2:
+        return "bilinmiyor"
+    sorted_points = sorted(points, key=lambda p: p[0][1])  # y'ye göre sırala
+    y1 = sorted_points[0][0][1]
+    y2 = sorted_points[-1][0][1]
+    return "yukarı" if y2 < y1 else "aşağı"
 
-    data = yf.download("BTC-USD", start=startDate, end=endDate, interval="1d")
-    
-    # Tüm verileri topla
-    for index, row in data.iterrows():
-        close_value = float(row['Close'])
-        all_data.append(close_value)
+def görselleri_analiz_et(klasör):
+    veriler = []
+    for dosya in os.listdir(klasör):
+        if dosya.endswith(".png") or dosya.endswith(".jpg"):
+            yol = os.path.join(klasör, dosya)
+            image = cv2.imread(yol)
 
-# Tüm verinin min ve max değerlerini bul
-min_value = min(all_data)
-max_value = max(all_data)
+            turuncu_mask = renk_filtrele(image, np.array([10, 100, 100]), np.array([25, 255, 255]))
+            yeşil_mask = renk_filtrele(image, np.array([40, 50, 50]), np.array([80, 255, 255]))
 
-# Verileri normalize et
-for i in range(1, 20):
-    startDate = f"2023-01-{i:02d}"
-    endDate = f"2023-02-{i:02d}"
+            eğimler = çizgi_eğimleri_bul(turuncu_mask)
+            hedef = yönü_belirle(yeşil_mask)
 
-    data = yf.download("BTC-USD", start=startDate, end=endDate, interval="1d")
-    inputData = []
-    for index, row in data.iterrows():
-        close_value = float(row['Close'])
-        normalized_value = (close_value - min_value) / (max_value - min_value)  # Normalizasyon
-        inputData.append(round(normalized_value,3))
-        print(f"Tarih: {index.date()} | Normalized Close: {normalized_value}")
+            giriş = {f"input{i+1}": e for i, e in enumerate(eğimler)}
+            giriş["target1"] = 1 if hedef == "yukarı" else 0
+            giriş["target2"] = 0 if hedef == "yukarı" else 1
+            veriler.append(giriş)
+    return pd.DataFrame(veriler)
 
-    beforeDataValue = yf.download("BTC-USD", start=f"2023-02-{i:02d}", end=f"2023-02-{i+1:02d}", interval="1d")
-    if not beforeDataValue.empty:
-        beforeTargetValue = beforeDataValue['Close'].iloc[0].item()
-        beforeNormalized = (beforeTargetValue - min_value) / (max_value - min_value)  # Normalizasyon
-        print(f"Before Normalized Close: {beforeNormalized}")
-    else:
-        print("Veri bulunamadı.")
-
-    targetDataValue = yf.download("BTC-USD", start=f"2023-02-{i+1:02d}", end=f"2023-02-{i+2:02d}", interval="1d")
-
-    if not targetDataValue.empty:
-        targetCloseValue = targetDataValue['Close'].iloc[0].item()
-        targetNormalized = (targetCloseValue - min_value) / (max_value - min_value)  # Normalizasyon
-        print(f"Target Normalized Close: {targetNormalized}")
-    else:
-        print("Veri bulunamadı.")
-    
-    # Target 1 ve Target 2'yi belirle
-    if targetNormalized > beforeNormalized:
-        print("Değer yükselecek")
-        target = [0, 1]
-    else:
-        print("Değer azalacak")
-        target = [1, 0]
-    
-    csvData.append(inputData + target)
-
-write_to_csv("coin.csv", csvData, len(csvData[0])-2, 2)
+# 🔁 Ana fonksiyonu çağır
+csv_df = görselleri_analiz_et("Veriler")
+csv_df.to_csv("grafik_formasyon_verisi.csv", index=False)
