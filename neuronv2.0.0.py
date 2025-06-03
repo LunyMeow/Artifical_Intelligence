@@ -266,6 +266,7 @@ def save_network_optimized(filename=None,symbol=""):
             randomMinWeight,
             randomMaxWeight,
             defaultNeuronActivationType,
+            defaultOutActivation,
             visualizeNetwork,
             debug
         ),
@@ -284,7 +285,7 @@ def load_network_optimized(filename):
         network_data = pickle.load(f)
     
     # Global deÄŸiÅŸkenleri gÃ¼ncelle
-    (randomMinWeight, randomMaxWeight, defaultNeuronActivationType, 
+    (randomMinWeight, randomMaxWeight, defaultNeuronActivationType,defaultOutActivation, 
      visualizeNetwork, debug) = network_data['config']
     Neuron.next_id = network_data['next_id']
     
@@ -540,7 +541,7 @@ def visualize_network(layers, connections, node_size=20,refresh=False,DONTVisual
                     closest_node = neuron_id
             
             if min_dist < (node_size/20) and closest_node is not None:
-                neuron = get_neuron_by_id(closest_node)
+                neuron = get_neuron_by_id(closest_node,layers)
                 incoming = [e for e in edge_info if e['to'] == closest_node]
                 outgoing = [e for e in edge_info if e['from'] == closest_node]
                 
@@ -888,7 +889,7 @@ def testModel(testFile: str, inputNum: int, targetNum: int,DONTVisualize=False):
         if debug or enable_logging: targetsAndOutputs.append([output[0],y[a][0]])
         if targetNum == 1:
             # Tek bir Ã§Ä±ktÄ± varsa, kÃ¼Ã§Ã¼k bir toleransla eÅŸitlik kontrolÃ¼ yapÄ±lÄ±r
-            if abs(output[0] - y[a][0]) < 0.3:  # tolerans isteÄŸe baÄŸlÄ± ayarlanabilir
+            if abs(output[0] - y[a][0]) < 0.1:  # tolerans isteÄŸe baÄŸlÄ± ayarlanabilir
                 success += 1
             else:
                 fail += 1
@@ -927,7 +928,7 @@ def train_network(X_train, y_train, batch_size=1, epochs=None, intelligenceValue
     
     cortical_column = CorticalColumn(learning_rateArg=learning_rate, targetError=epochs if epochs <1 else None,
                                      maxEpochForTargetError=8000 if epochNumberForLimitError==None else epochNumberForLimitError,
-                                     originalNetworkModel=[len(liste) for liste in layers],useDynamicModelChanges=useDynamicModelChanges)
+                                     originalNetworkModel=[len(liste) for liste in layers],useDynamicModelChanges=useDynamicModelChanges,targetEpoch=None if epochs <1 else epochs)
 
     
     avg_error = float('inf')
@@ -1398,7 +1399,7 @@ class CorticalColumn:
     
     def __init__(self, log_file="network_changes.log", learning_rateArg=0.3,targetError=None,
                  maxEpochForTargetError=1000,originalNetworkModel=None,
-                 overfit_threshold=0.9,useDynamicModelChanges=True):
+                 overfit_threshold=0.9,useDynamicModelChanges=True,targetEpoch=None):
         global layers, connections
         
         self.firstLearningRate = learning_rateArg
@@ -1426,6 +1427,8 @@ class CorticalColumn:
         self.overfit_threshold = overfit_threshold
         self.val_error_history = []
         self.useDynamicModelChanges = useDynamicModelChanges
+
+        self.targetEpoch=targetEpoch
 
         
         
@@ -1580,7 +1583,10 @@ class CorticalColumn:
 
             })
 
-            progress_bar(self.loss_history[1]-avg_error,total=self.loss_history[1])
+            if self.targetError is not None:
+                progress_bar(self.loss_history[1]-avg_error,total=self.loss_history[1])
+            else:
+                progress_bar(current=self.current_epoch,total=self.targetEpoch)
             
             if self.useDynamicModelChanges:
                 self.adapt_network_structure(avg_error)
@@ -2553,7 +2559,7 @@ def addNeuron(layer_index):
 # Command functions
 
 def cmd_refresh(refresh=True,DONTVisualize=False):
-    """Refresh the network and visualize"""
+    #Refresh the network and visualize
     clearGUI()
     runAI()
     visualize_network(layers, connections, refresh=refresh,DONTVisualize=DONTVisualize)
@@ -2640,7 +2646,7 @@ def cmd_train_custom(file_path: str,
             train_kwargs['intelligenceValue'] = intelligenceValue
         train_network(X, y, **train_kwargs,useDynamicModelChanges=useDynamicModelChanges,symbol=symbol,epochNumberForLimitError=epochNumberForLimitError)
         hata=testModel(file_path.replace("trainingDatas/", "trainingDatas/test"),inputNum=network_structure[0],targetNum=network_structure[-1],DONTVisualize=True)
-        return "EÄŸitim tamamlandÄ±. Hata:"+str(hata)
+        return "Egitim tamamlandi. Hata:"+str(hata)
     except Exception as e:
         traceback.print_exc()
         return f"Hata: {e}"
@@ -2726,174 +2732,8 @@ def cmd_help():
 
 
 
-import numpy as np
-import sounddevice as sd
-import librosa
-from queue import Queue
-import time
-import matplotlib.pyplot as plt
-from matplotlib.animation import FuncAnimation
-
-class LiveLogMelExtractor:
-    def __init__(self, visualize=False):
-        # Ayarlar
-        self.sample_rate = 16000
-        self.n_fft = 512
-        self.hop_length = 160
-        self.win_length = 400
-        self.n_mels = 40
-        self.update_interval = 100  # ms
-        
-        # Sistem değişkenleri
-        self.visualize = visualize
-        self.audio_queue = Queue()
-        self.is_recording = False
-        self.stream = None
-        self.audio_buffer = np.array([])
-        self.current_logmel = None
-        
-        # Görselleştirme için
-        self.fig = None
-        self.ax = None
-        self.im = None
-        self.ani = None
-
-    def audio_callback(self, indata, frames, time, status):
-        if status:
-            print(f"Ses akışı hatası: {status}")
-        if self.is_recording:
-            self.audio_queue.put(indata.copy())
-
-    def compute_logmel(self, audio):
-        if len(audio) < self.win_length:
-            return None
-            
-        S = librosa.feature.melspectrogram(
-            y=audio,
-            sr=self.sample_rate,
-            n_fft=self.n_fft,
-            hop_length=self.hop_length,
-            win_length=self.win_length,
-            n_mels=self.n_mels,
-            window='hamming',
-            power=2.0
-        )
-        return librosa.power_to_db(S)
-
-    def process_audio(self):
-        while not self.audio_queue.empty():
-            audio_chunk = self.audio_queue.get()
-            self.audio_buffer = np.append(self.audio_buffer, audio_chunk.flatten())
-            
-            if len(self.audio_buffer) >= self.win_length:
-                self.current_logmel = self.compute_logmel(self.audio_buffer[-self.win_length:])
-                
-                if self.current_logmel is not None:
-                    # Görselleştirme aktifse güncelle
-                    if self.visualize and self.im is not None:
-                        self.im.set_array(self.current_logmel)
-                        self.im.set_extent([0, self.current_logmel.shape[1], 0, self.n_mels])
-                        self.im.autoscale()
-                    
-                    # Logmel verilerini konsola yazdır
-                    self.print_logmel_info()
-    
-    def print_logmel_info(self):
-        """Logmel verilerini konsola yazdır"""
-        if self.current_logmel is not None:
-            print("\n" + "="*50)
-            print(f"LogMel Spektrogram Verisi (Boyut: {self.current_logmel.shape})")
-            print(f"Min Değer: {np.min(self.current_logmel):.2f} dB")
-            print(f"Max Değer: {np.max(self.current_logmel):.2f} dB")
-            print(f"Ortalama: {np.mean(self.current_logmel):.2f} dB")
-            print("Son 5 zaman noktasının ortalaması:")
-            print(np.mean(self.current_logmel[:, -5:], axis=1))
-            print("Bütün logmel verisinin boyutu:",len(self.current_logmel))
-            print("="*50 + "\n")
-
-    def get_current_logmel(self):
-        """Güncel logmel verisini döndür"""
-        return self.current_logmel.copy() if self.current_logmel is not None else None
-
-    def update_plot(self, frame):
-        self.process_audio()
-        return [self.im] if self.im is not None else []
-
-    def start(self):
-        print("Canlı Log-Mel Spektrogram İşleyici")
-        print(f"Görselleştirme: {'Açık' if self.visualize else 'Kapalı'}")
-        print("Kayıt başlatılıyor... (Çıkmak için Ctrl+C)")
-        
-        self.is_recording = True
-        self.stream = sd.InputStream(
-            callback=self.audio_callback,
-            channels=1,
-            samplerate=self.sample_rate,
-            blocksize=self.hop_length
-        )
-        self.stream.start()
-        
-        if self.visualize:
-            self.fig, self.ax = plt.subplots(figsize=(10, 4))
-            self.ani = FuncAnimation(
-                self.fig,
-                self.update_plot,
-                interval=self.update_interval,
-                blit=True,
-                cache_frame_data=False
-            )
-            plt.tight_layout()
-            plt.show()
-        else:
-            try:
-                while self.is_recording:
-                    self.process_audio()
-                    time.sleep(self.update_interval/1000)
-            except KeyboardInterrupt:
-                self.stop()
-
-    def stop(self):
-        self.is_recording = False
-        if self.stream:
-            self.stream.stop()
-            self.stream.close()
-        print("Kayıt durduruldu.")
-
-if __name__ == "__main__" and False:
-    # Örnek kullanım:
-    # Görselleştirme ile çalıştırma:
-    # extractor = LiveLogMelExtractor(visualize=True)
-    
-    # Görselleştirme olmadan çalıştırma:
-    extractor = LiveLogMelExtractor(visualize=False)
-    
-    try:
-        extractor.start()
-    except KeyboardInterrupt:
-        extractor.stop()
-    except Exception as e:
-        extractor.stop()
-        raise e
-
-cmd_toggle_visualize()
-cmd_train_custom(file_path="parity_problem.csv",network_structure=[4,8,2],epochs=0.1,learning_rate=1)
 
 
-cmd_set_input([0,1,0,0])
-
-cmd_refresh(refresh=False)
 
 
-removeNeuron(0,2)
 
-cmd_refresh(refresh=False)
-
-addNeuron(0)
-
-cmd_refresh(refresh=False)
-
-
-cmd_train_custom(file_path="parity_problem.csv",network_structure=[4,8,2],epochs=0.1,learning_rate=1)
-cmd_set_input([0,1,0,0])
-
-cmd_refresh(refresh=False)
