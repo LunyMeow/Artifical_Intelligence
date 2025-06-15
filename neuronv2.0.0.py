@@ -824,7 +824,6 @@ def signal_handler(sig, frame):
 
     
 
-import os
 
 def klasor_hazirla(yol):
     """Verilen yol iÃ§in klasÃ¶r yapÄ±sÄ±nÄ± hazÄ±rlar"""
@@ -913,7 +912,7 @@ def testModel(testFile: str, inputNum: int, targetNum: int,DONTVisualize=False):
 
 
 
-def train_network(X_train, y_train, batch_size=1, epochs=None, intelligenceValue=None, learning_rate=0.05,useDynamicModelChanges=True,symbol="",epochNumberForLimitError=None):
+def train_network(X_train, y_train, batch_size=1, epochs=None, intelligenceValue=None, learning_rate=0.05,useDynamicModelChanges=True,symbol="",epochNumberForLimitError=None,returnModelFile=False):
     global error_history, epoch_history, start_time, enable_logging, learning_rate_history
     
     if enable_logging:
@@ -1032,8 +1031,10 @@ def train_network(X_train, y_train, batch_size=1, epochs=None, intelligenceValue
                 'last_epoch': epoch
             })
         raise
-    
-    return cortical_column, avg_error
+    if returnModelFile:
+        return filename
+    else:
+        return cortical_column, avg_error 
 
 
 
@@ -2630,7 +2631,7 @@ def cmd_train_custom(file_path: str,
                      epochs=None,
                      batch_size=None,
                      learning_rate=None,
-                     intelligenceValue=None,useDynamicModelChanges=True,symbol="",epochNumberForLimitError=None) -> str:
+                     intelligenceValue=None,useDynamicModelChanges=True,symbol="",epochNumberForLimitError=None,returnModelFile=False) -> str:
     """Train network with custom data"""
     try:
         setLayers(network_structure or [2,4,1])
@@ -2644,9 +2645,11 @@ def cmd_train_custom(file_path: str,
             train_kwargs['learning_rate'] = learning_rate
         if intelligenceValue is not None:
             train_kwargs['intelligenceValue'] = intelligenceValue
-        train_network(X, y, **train_kwargs,useDynamicModelChanges=useDynamicModelChanges,symbol=symbol,epochNumberForLimitError=epochNumberForLimitError)
-        hata=testModel(file_path.replace("trainingDatas/", "trainingDatas/test"),inputNum=network_structure[0],targetNum=network_structure[-1],DONTVisualize=True)
-        return "Egitim tamamlandi. Hata:"+str(hata)
+        filename = train_network(X, y, **train_kwargs,useDynamicModelChanges=useDynamicModelChanges,symbol=symbol,epochNumberForLimitError=epochNumberForLimitError,returnModelFile=returnModelFile)
+        if returnModelFile:
+            return filename
+        else:
+            return "Eğitim Tamamlandı."
     except Exception as e:
         traceback.print_exc()
         return f"Hata: {e}"
@@ -2731,9 +2734,14 @@ def cmd_help():
 
 
 
+file_path="parity_problem.csv"
+network_structure=[4,1,2]
 
-
-
+trainingModelFile = cmd_train_custom(file_path=file_path,network_structure=network_structure,epochs=0.1,learning_rate=1,returnModelFile=True)
+#hata=testModel(file_path.replace("trainingDatas/", "trainingDatas/test"),inputNum=network_structure[0],targetNum=network_structure[-1],DONTVisualize=True)
+cmd_load_model(trainingModelFile)
+cmd_toggle_visualize()
+cmd_refresh(refresh=False)
 
 
 
