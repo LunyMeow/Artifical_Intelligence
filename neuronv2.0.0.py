@@ -2740,7 +2740,6 @@ network_structure=[4,1,2]
 trainingModelFile = cmd_train_custom(file_path=file_path,network_structure=network_structure,epochs=0.1,learning_rate=1,returnModelFile=True)
 #hata=testModel(file_path.replace("trainingDatas/", "trainingDatas/test"),inputNum=network_structure[0],targetNum=network_structure[-1],DONTVisualize=True)
 cmd_load_model(trainingModelFile)
-cmd_toggle_visualize()
 cmd_refresh(refresh=False)
 
 
