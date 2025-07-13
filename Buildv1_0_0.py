@@ -86,7 +86,7 @@ class CorticalColumn:
     def __init__(self,log_file="network_changes.log", learning_rateArg=0.3,targetError=None,
                  maxEpochForTargetError=1000,originalNetworkModel=None,
                  overfit_threshold=0.9,useDynamicModelChanges=True,targetEpoch=None):
-        global layers, connections
+        
         
         self.firstLearningRate = learning_rateArg
         self.learningRate = learning_rateArg
@@ -142,22 +142,30 @@ class CorticalColumn:
             json.dump(entry, f)
             f.write("\n")
 
-    def log_change(self, change_type, details):
-        global layers
-        """DeÄŸiÅŸiklikleri loglayan yardÄ±mcÄ± fonksiyon"""
+    def log_change(self, change_type, details, partName=None):
+        """Değişiklikleri loglayan yardımcı fonksiyon"""
         log_entry = {
             'epoch': self.current_epoch,
             'timestamp': self._get_timestamp(),
             'elapsed_seconds': round(time.time() - self.log_start_time, 2),
             'type': change_type,
             'details': details,
-            'network_state': {
-                'layer_sizes': [len(layer) for layer in layers],
-                'total_neurons': sum(len(layer) for layer in layers)
-                
-            }
+            'partName': partName if partName is not None else "None"
         }
+
+        if partName is not None and partName in self.parts:
+            log_entry['network_state'] = {
+                'layer_sizes': [len(layer) for layer in self.parts[partName].layers],
+                'total_neurons': sum(len(layer) for layer in self.parts[partName].layers)
+            }
+        else:
+            log_entry['network_state'] = {
+                'layer_sizes': [],
+                'total_neurons': 0
+            }
+
         self._append_to_log(log_entry)
+
 
     def calculate_slope(self, error_history, start_epoch=None, end_epoch=None):
         """
@@ -198,7 +206,7 @@ class CorticalColumn:
 
         return slope, r_squared
 
-    def monitor_network(self, avg_error,eveyXEpochAdaptNetwork=10):
+    def monitor_network(self,avg_error,partName,eveyXEpochAdaptNetwork=10):
         """
         Enhanced monitoring with plateau detection and improved learning rate adjustments.
         This function analyzes error trends to manage learning rate changes for optimal training.
@@ -216,32 +224,35 @@ class CorticalColumn:
         if slope<1e-6 and slope >-1e-6 and debug:
             self.log_change('its linear now',{
                 'between':f"{startEpoch}-now",
-                'slope':slope
-            })
+                'slope':slope,
+                'partName':partName
+            },partName=partName)
         
 
 
         #print(is_multiple(self.current_epoch,self.maxEpochForTargetError),slope)
-        if is_multiple(self.current_epoch+1,self.maxEpochForTargetError) and slope > -1e-8:
-            minError = np.min(self.loss_history)
-            increaseValue=0.9
-            if debug:
-                self.log_change('minimum Error Changed and Neural network resetted',{
-                    'current target error':self.targetError,
-                    'minimum Error':minError,
-                    'now error':self.loss_history[-1],
-                    'current lr':self.learningRate,
-                    'first lr':self.firstLearningRate,
-                    'increase value':increaseValue,
-                    'now target value':minError/increaseValue
+        if self.maxEpochForTargetError is not None:
+            if is_multiple(self.current_epoch+1,self.maxEpochForTargetError) and slope > -1e-8:
+                minError = np.min(self.loss_history)
+                increaseValue=0.9
+                if debug:
+                    self.log_change('minimum Error Changed and Neural network resetted',{
+                        'current target error':self.targetError,
+                        'minimum Error':minError,
+                        'now error':self.loss_history[-1],
+                        'current lr':self.learningRate,
+                        'first lr':self.firstLearningRate,
+                        'increase value':increaseValue,
+                        'now target value':minError/increaseValue,
+                        'partName':partName
 
-                })
-            self.learningRate = self.firstLearningRate
-            self.targetError = minError/increaseValue
-            #print("---------------------------------------------")
-            if self.originalNetworkModel is not None:
-                setLayers(self.originalNetworkModel)
-            return self.learningRate,self.targetError
+                    },partName=partName)
+                self.learningRate = self.firstLearningRate
+                self.targetError = minError/increaseValue
+                #print("---------------------------------------------")
+                if self.originalNetworkModel is not None:
+                    self.parts[partName].setLayers(self.originalNetworkModel)
+                return self.learningRate,self.targetError
             
 
         # Log debug information about error trend if needed
@@ -253,7 +264,8 @@ class CorticalColumn:
                     'slope': slope,
                     'r_square': r_square,
                     'current_lr': self.learningRate,
-                })
+                    'partName':partName
+                },partName=partName)
         
         
         
@@ -274,8 +286,9 @@ class CorticalColumn:
         if self.current_epoch % eveyXEpochAdaptNetwork == 2 :  # Her 10 epoch'ta bir
             self.log_change('avg_error_debug', {
                 'avg_error': avg_error,
+                'partName':partName,
 
-            })
+            },partName=partName)
 
             if self.targetError is not None:
                 progress_bar(self.loss_history[1]-avg_error,total=self.loss_history[1])
@@ -283,7 +296,7 @@ class CorticalColumn:
                 progress_bar(current=self.current_epoch,total=self.targetEpoch)
             
             if self.useDynamicModelChanges:
-                self.adapt_network_structure(avg_error)
+                self.adapt_network_structure(avg_error,partName=partName)
             
 
         
@@ -468,22 +481,22 @@ class CorticalColumn:
         # Mevcut mantÄ±ÄŸÄ± cosine decay ile birleÅŸtir
         return max(decayed_lr * 0.99, min_lr)  # Ekstra yavaÅŸ decay
 
-    def backpropagation(self,input_data, target_data):
-        global layers, connections
+    def backpropagation(self,input_data, target_data,partName):
+
 
         # 1. Ä°leri Besleme - GiriÅŸ verilerini aÄŸa ver
         # GiriÅŸ katmanÄ±ndaki nÃ¶ron deÄŸerlerini ayarla
         for i, value in enumerate(input_data):
-            if i < len(layers[0]):
-                layers[0][i].value = value
+            if i < len(self.parts[partName].layers[0]):
+                self.parts[partName].layers[0][i].value = value
 
         # Ä°leri besleme iÅŸlemi - tÃ¼m aÄŸÄ± hesapla
 
-        runAI()
+        self.parts[partName].runAI()
 
         # 2. Hata Hesaplama
         # Ã‡Ä±kÄ±ÅŸ katmanÄ±ndaki her nÃ¶ron iÃ§in hata hesapla
-        output_layer = layers[-1]
+        output_layer = self.parts[partName].layers[-1]
         output_errors = []
 
         for i, neuron in enumerate(output_layer):
@@ -495,7 +508,7 @@ class CorticalColumn:
 
         # 3. Geri YayÄ±lÄ±m
         # Her katman iÃ§in delta deÄŸerlerini hesapla (Ã§Ä±kÄ±ÅŸtan giriÅŸe doÄŸru)
-        deltas = [[] for _ in range(len(layers))]
+        deltas = [[] for _ in range(len(self.parts[partName].layers))]
 
         # Ã–nce Ã§Ä±kÄ±ÅŸ katmanÄ±ndaki delta deÄŸerlerini hesapla
         for i, neuron in enumerate(output_layer):
@@ -507,14 +520,14 @@ class CorticalColumn:
                 deltas[-1].append(0)
 
         # Gizli katmanlar iÃ§in delta deÄŸerlerini hesapla (geriye doÄŸru)
-        for layer_idx in range(len(layers)-2, 0, -1):  # Son gizli katmandan ilk gizli katmana
-            for i, neuron in enumerate(layers[layer_idx]):
+        for layer_idx in range(len(self.parts[partName].layers)-2, 0, -1):  # Son gizli katmandan ilk gizli katmana
+            for i, neuron in enumerate(self.parts[partName].layers[layer_idx]):
                 error = 0
                 # Bu nÃ¶rondan sonraki katmana olan tÃ¼m baÄŸlantÄ±larÄ± kontrol et
-                for conn in connections[layer_idx].get(neuron.id, []):
+                for conn in self.parts[partName].connections[layer_idx].get(neuron.id, []):
                     # Sonraki katmandaki nÃ¶ronu bul
                     next_layer_idx = layer_idx + 1
-                    for j, next_neuron in enumerate(layers[next_layer_idx]):
+                    for j, next_neuron in enumerate(self.parts[partName].layers[next_layer_idx]):
                         if conn.connectedTo[1] == next_neuron.id:
                             # Bu baÄŸlantÄ±nÄ±n aÄŸÄ±rlÄ±ÄŸÄ± * sonraki nÃ¶ronun deltasÄ±
                             error += conn.weight * deltas[next_layer_idx][j]
@@ -525,12 +538,12 @@ class CorticalColumn:
                 deltas[layer_idx].append(delta)
 
         # 4. AÄŸÄ±rlÄ±k GÃ¼ncelleme
-        for layer_idx in range(len(layers)-1):
-            for i, neuron in enumerate(layers[layer_idx]):
-                for conn in connections[layer_idx].get(neuron.id, []):
+        for layer_idx in range(len(self.parts[partName].layers)-1):
+            for i, neuron in enumerate(self.parts[partName].layers[layer_idx]):
+                for conn in self.parts[partName].connections[layer_idx].get(neuron.id, []):
                     # Bir sonraki katmandaki baÄŸlÄ± nÃ¶ronu bul
                     next_layer_idx = layer_idx + 1
-                    for j, next_neuron in enumerate(layers[next_layer_idx]):
+                    for j, next_neuron in enumerate(self.parts[partName].layers[next_layer_idx]):
                         if conn.connectedTo[1] == next_neuron.id:
                             # AÄŸÄ±rlÄ±k deÄŸiÅŸimi = Ã¶ÄŸrenme oranÄ± * delta * nÃ¶ron Ã§Ä±ktÄ±sÄ±
                             
@@ -550,23 +563,23 @@ class CorticalColumn:
         if debug:
             # AÄŸÄ±rlÄ±k gÃ¼ncellemelerini logla
             weight_updates = []
-            for layer_idx in range(len(layers)-1):
-                for i, neuron in enumerate(layers[layer_idx]):
-                    for conn in connections[layer_idx].get(neuron.id, []):
+            for layer_idx in range(len(self.parts[partName].layers)-1):
+                for i, neuron in enumerate(self.parts[partName].layers[layer_idx]):
+                    for conn in self.parts[partName].connections[layer_idx].get(neuron.id, []):
                         weight_updates.append({
                             'from_neuron': conn.connectedTo[0],
                             'to_neuron': conn.connectedTo[1],
                             'old_weight': old_weight,  # GÃ¼ncellemeden Ã¶nceki aÄŸÄ±rlÄ±k
                             'new_weight': conn.weight,
                             'change': conn.weight-old_weight
-                        })
+                        },partName=partName)
 
             if weight_updates:
                 self.log_change('weight_updates', {
                     'count': len(weight_updates),
                     'average_change': sum(abs(w['change']) for w in weight_updates) / len(weight_updates),
                     'updates': weight_updates[:10]  # Ä°lk 10 gÃ¼ncellemeyi gÃ¶ster (performans iÃ§in)
-                })
+                },partName=partName)
 
         return total_error
         
@@ -574,8 +587,9 @@ class CorticalColumn:
         pass
                 
     
-    def calculate_neuron_health(self,neuron):
-        global layers,connections
+    def calculate_neuron_health(self,neuron,partName):
+        layers= self.parts[partName].layers
+        connections = self.parts[partName].connections
         # 1. NÃ¶ronun aktivasyon deÄŸeri
         activation_score = neuron.output
 
@@ -623,16 +637,16 @@ class CorticalColumn:
         
 
 
-    def find_neuron_layer(self,neuron_id):
+    def find_neuron_layer(self,neuron_id,partName):
         """Verilen ID'ye sahip nÃ¶ronun hangi katmanda olduÄŸunu bulur"""
-        global layers
+        layers=self.parts[partName].layers
         for layer_idx, layer in enumerate(layers):
             for neuron in layer:
                 if neuron.id == neuron_id:
                     return layer_idx,neuron
         return None
 
-    def add_neuron_to_layer(self, layer_index=None, neuron_id=None):
+    def add_neuron_to_layer(self,partName, layer_index=None, neuron_id=None):
         """
         Belirli bir katmana yeni bir nÃ¶ron ekler ve sadece bu nÃ¶ronla ilgili baÄŸlantÄ±larÄ± oluÅŸturur
 
@@ -640,7 +654,7 @@ class CorticalColumn:
             layer_index: NÃ¶ronun ekleneceÄŸi katmanÄ±n indeksi (None ise neuron_id'nin katmanÄ± kullanÄ±lÄ±r)
             neuron_id: Referans nÃ¶ron ID'si (bunun katmanÄ±na yeni nÃ¶ron eklenir, layer_index None ise)
         """
-        global layers, connections
+
 
         # EÄŸer layer_index verilmediyse ve neuron_id verildiyse, nÃ¶ronun katmanÄ±nÄ± bul
         if layer_index is None and neuron_id is not None:
@@ -651,59 +665,62 @@ class CorticalColumn:
 
         # Hala layer_index belirlenemedi ise, varsayÄ±lan olarak son gizli katmanÄ± kullan
         if layer_index is None:
-            if len(layers) <= 2:  # Sadece giriÅŸ ve Ã§Ä±kÄ±ÅŸ katmanlarÄ± varsa
+            if len(self.parts[partName].layers) <= 2:  # Sadece giriÅŸ ve Ã§Ä±kÄ±ÅŸ katmanlarÄ± varsa
                 layer_index = 0  # GiriÅŸ katmanÄ±na ekle (veya tercih ettiÄŸiniz baÅŸka bir strateji)
             else:
-                layer_index = len(layers) - 2  # Son gizli katman (Ã§Ä±kÄ±ÅŸ katmanÄ±ndan bir Ã¶nceki)
+                layer_index = len(self.parts[partName].layers) - 2  # Son gizli katman (Ã§Ä±kÄ±ÅŸ katmanÄ±ndan bir Ã¶nceki)
 
             if debug:
                 print(f"Katman indeksi belirlenmediÄŸi iÃ§in varsayÄ±lan olarak katman {layer_index} kullanÄ±lÄ±yor.")
 
-        if layer_index < 0 or layer_index >= len(layers):
+        if layer_index < 0 or layer_index >= len(self.parts[partName].layers):
             print(f"Hata: {layer_index} indeksi geÃ§erli bir katman indeksi deÄŸil.")
             return None
 
         # EÄŸer eklenen nÃ¶ron Ã§Ä±kÄ±ÅŸ katmanÄ±na aitse linear, deÄŸilse default aktivasyon
-        activation_type = defaultOutActivation if layer_index == len(layers) - 1 else defaultNeuronActivationType
+        activation_type = defaultOutActivation if layer_index == len(self.parts[partName].layers) - 1 else defaultNeuronActivationType
 
         # Yeni nÃ¶ron oluÅŸtur
         new_neuron = Neuron(activation_type=activation_type)
 
         # Yeni nÃ¶ronu katmana ekle
-        layers[layer_index].append(new_neuron)
+        self.parts[partName].layers[layer_index].append(new_neuron)
 
         # Ã–nceki katmandan bu nÃ¶rona baÄŸlantÄ±lar oluÅŸtur
         if layer_index > 0:
             prev_layer_idx = layer_index - 1
-            for prev_neuron in layers[prev_layer_idx]:
-                weight = random.uniform(-1 / np.sqrt(len(layers[layer_index])), 
-                                        1 / np.sqrt(len(layers[layer_index])))
+            for prev_neuron in self.parts[partName].layers[prev_layer_idx]:
+                weight = random.uniform(-1 / np.sqrt(len(self.parts[partName].layers[layer_index])), 
+                                        1 / np.sqrt(len(self.parts[partName].layers[layer_index])))
                 conn = Connection(connectedToArg=[prev_neuron.id, new_neuron.id], weight=weight)
 
-                if prev_neuron.id not in connections[prev_layer_idx]:
-                    connections[prev_layer_idx][prev_neuron.id] = []
+                if prev_neuron.id not in self.parts[partName].connections[prev_layer_idx]:
+                    self.parts[partName].connections[prev_layer_idx][prev_neuron.id] = []
 
-                connections[prev_layer_idx][prev_neuron.id].append(conn)
+                self.parts[partName].connections[prev_layer_idx][prev_neuron.id].append(conn)
 
         # Bu nÃ¶rondan sonraki katmana baÄŸlantÄ±lar oluÅŸtur
-        if layer_index < len(layers) - 1:
-            for next_neuron in layers[layer_index + 1]:
-                weight = random.uniform(-1 / np.sqrt(len(layers[layer_index])), 
-                                        1 / np.sqrt(len(layers[layer_index])))
+        if layer_index < len(self.parts[partName].layers) - 1:
+            for next_neuron in self.parts[partName].layers[layer_index + 1]:
+                weight = random.uniform(-1 / np.sqrt(len(self.parts[partName].layers[layer_index])), 
+                                        1 / np.sqrt(len(self.parts[partName].layers[layer_index])))
                 conn = Connection(connectedToArg=[new_neuron.id, next_neuron.id], weight=weight)
 
-                if new_neuron.id not in connections[layer_index]:
-                    connections[layer_index][new_neuron.id] = []
+                if new_neuron.id not in self.parts[partName].connections[layer_index]:
+                    self.parts[partName].connections[layer_index][new_neuron.id] = []
 
-                connections[layer_index][new_neuron.id].append(conn)
+                self.parts[partName].connections[layer_index][new_neuron.id].append(conn)
 
         if debug:
             print(f"Katman {layer_index}'e yeni nÃ¶ron (ID: {new_neuron.id}) eklendi.")
 
+
+
+
         return new_neuron
 
 
-    def remove_neuron_from_layer(self,layer_index=None, neuron_id=None):
+    def remove_neuron_from_layer(self,layer_index=None, neuron_id=None,partName=None):
         """
         Belirli bir nÃ¶ronu ve sadece onunla ilgili baÄŸlantÄ±larÄ± siler
 
@@ -711,7 +728,6 @@ class CorticalColumn:
             layer_index: NÃ¶ronun bulunduÄŸu katmanÄ±n indeksi (None ise otomatik bulunur)
             neuron_id: Silinecek nÃ¶ronun ID'si
         """
-        global layers, connections
 
         if neuron_id is None:
             print("Hata: Silinecek nÃ¶ronun ID'si belirtilmedi.")
@@ -724,13 +740,13 @@ class CorticalColumn:
                 print(f"Hata: ID'si {neuron_id} olan nÃ¶ron bulunamadÄ±.")
                 return False
 
-        if layer_index < 0 or layer_index >= len(layers):
+        if layer_index < 0 or layer_index >= len(self.parts[partName].layers):
             print(f"Hata: {layer_index} indeksi geÃ§erli bir katman indeksi deÄŸil.")
             return False
 
         # NÃ¶ronu bul
         neuron_to_remove = None
-        for i, neuron in enumerate(layers[layer_index]):
+        for i, neuron in enumerate(self.parts[partName].layers[layer_index]):
             if neuron.id == neuron_id:
                 neuron_to_remove = neuron
                 neuron_index = i
@@ -741,30 +757,32 @@ class CorticalColumn:
             return False
 
         # NÃ¶ronu katmandan Ã§Ä±kar
-        layers[layer_index].pop(neuron_index)
+        self.parts[partName].layers[layer_index].pop(neuron_index)
 
         # Ã–nceki katmandan bu nÃ¶rona gelen baÄŸlantÄ±larÄ± sil
         if layer_index > 0:
             prev_layer_idx = layer_index - 1
-            for prev_neuron_id in list(connections[prev_layer_idx].keys()):
-                connections[prev_layer_idx][prev_neuron_id] = [
-                    conn for conn in connections[prev_layer_idx][prev_neuron_id] 
+            for prev_neuron_id in list(self.parts[partName].connections[prev_layer_idx].keys()):
+                self.parts[partName].connections[prev_layer_idx][prev_neuron_id] = [
+                    conn for conn in self.parts[partName].connections[prev_layer_idx][prev_neuron_id] 
                     if conn.connectedTo[1] != neuron_id
                 ]
 
         # Bu nÃ¶rondan sonraki katmana giden baÄŸlantÄ±larÄ± sil
-        if layer_index < len(layers) - 1:
-            if neuron_id in connections[layer_index]:
-                del connections[layer_index][neuron_id]
+        if layer_index < len(self.parts[partName].layers) - 1:
+            if neuron_id in self.parts[partName].connections[layer_index]:
+                del self.parts[partName].connections[layer_index][neuron_id]
 
         if debug:
             print(f"Katman {layer_index}'den nÃ¶ron (ID: {neuron_id}) silindi.")
+
+
 
         return True
 
 
     
-    def adapt_network_structure(self, avg_train_error, avg_val_error=None):
+    def adapt_network_structure(self, avg_train_error,partName, avg_val_error=None):
         """
         Dinamik yapÄ± adaptasyonu:
         - Overfitting kontrolÃ¼ ve gerekirse nÃ¶ron kÄ±rpma
@@ -777,34 +795,33 @@ class CorticalColumn:
             self.val_error_history.append(avg_val_error)
             gap = avg_val_error - avg_train_error
             if gap > self.overfit_threshold:
-                self.prune_for_overfitting(gap)
+                self.prune_for_overfitting(gap,partName=partName)
                 return
 
         # 1. NÃ¶ron seviyesinde optimizasyon
-        self.neuron_level_optimization(avg_train_error)
+        self.neuron_level_optimization(avg_train_error,partName=partName)
         # 2. Katman seviyesinde optimizasyon
-        self.layer_level_optimization(avg_train_error)
+        self.layer_level_optimization(avg_train_error,partName=partName)
         # 3. Stratejik bÃ¼yÃ¼me
-        self.strategic_growth(avg_train_error)
+        self.strategic_growth(avg_train_error,partName=partName)
 
-    def prune_for_overfitting(self, gap):
+    def prune_for_overfitting(self, gap,partName):
         """
         AÅŸÄ±rÄ± Ã¶ÄŸrenme tespit edilirse, nÃ¶ron sayÄ±sÄ±nÄ± azaltarak basitleÅŸtirir
         """
-        global layers
         # Oran: gap / overfit_threshold, en fazla %50 azaltma
         factor = min(gap / self.overfit_threshold, 1.0) * 0.5
-        for idx in range(1, len(layers) - 1):
-            layer = layers[idx]
+        for idx in range(1, len(self.parts[partName].layers) - 1):
+            layer = self.parts[partName].layers[idx]
             current_size = len(layer)
             desired_size = max(2, int(current_size * (1 - factor)))
             to_remove = current_size - desired_size
             if to_remove > 0:
                 # SaÄŸlÄ±k skoru dÃ¼ÅŸÃ¼k nÃ¶ronlarÄ± Ã¶ncelikli kaldÄ±r
-                scores = [(neuron, self.calculate_neuron_health(neuron)) for neuron in layer]
+                scores = [(neuron, self.calculate_neuron_health(neuron,partName=partName)) for neuron in layer]
                 scores.sort(key=lambda x: x[1])
                 for neuron, _ in scores[:to_remove]:
-                    self.remove_neuron_from_layer(idx, neuron.id)
+                    self.remove_neuron_from_layer(idx, neuron.id,partName=partName)
                     self.log_change('pruned_for_overfit', {
                         'neuron_id': neuron.id,
                         'layer': idx,
@@ -819,8 +836,9 @@ class CorticalColumn:
         # Temel kural: Hidden layer boyutu giriÅŸ ve Ã§Ä±kÄ±ÅŸÄ±n ortalamasÄ±ndan bÃ¼yÃ¼k olmalÄ±
         # ama Ã§ok bÃ¼yÃ¼k olmamalÄ±
         avg_size = (input_size + output_size) / 2
-        min_size = max(input_size, output_size) * 1.3  # En az giriÅŸ/Ã§Ä±kÄ±ÅŸÄ±n 1.5 katÄ±
-        max_size = input_size * 3  # GiriÅŸin 3 katÄ±nÄ± geÃ§memeli
+        max_size = int(avg_size * 2)    # ortalamanın 2 katını geçmesin
+        min_size = int(avg_size * 0.8)  # ortalamanın %80’inden az olmasın
+
 
         # Ã‡ok bÃ¼yÃ¼k giriÅŸler iÃ§in (500+ gibi) farklÄ± kurallar
         if input_size > 100:
@@ -833,18 +851,17 @@ class CorticalColumn:
             'recommended': int(min(max_size, max(min_size, avg_size * 1.5)))
         }
 
-    def detect_excessive_neurons(self, layer_idx):
+    def detect_excessive_neurons(self, layer_idx,partName):
         """
         Belirli bir katmandaki fazla nÃ¶ronlarÄ± tespit eder
         """
-        global layers
 
-        if layer_idx == 0 or layer_idx == len(layers)-1:
+        if layer_idx == 0 or layer_idx == len(self.parts[partName].layers)-1:
             return []  # GiriÅŸ/Ã§Ä±kÄ±ÅŸ katmanlarÄ±nda optimizasyon yapma
 
-        current_layer = layers[layer_idx]
-        input_size = len(layers[layer_idx-1])
-        output_size = len(layers[layer_idx+1]) if layer_idx+1 < len(layers) else 0
+        current_layer = self.parts[partName].layers[layer_idx]
+        input_size = len(self.parts[partName].layers[layer_idx-1])
+        output_size = len(self.parts[partName].layers[layer_idx+1]) if layer_idx+1 < len(self.parts[partName].layers) else 0
 
         optimal_sizes = self.calculate_optimal_layer_sizes(input_size, output_size)
 
@@ -857,7 +874,7 @@ class CorticalColumn:
             # En az etkin nÃ¶ronlarÄ± bul
             neuron_healths = []
             for neuron in current_layer:
-                health = self.calculate_neuron_health(neuron)
+                health = self.calculate_neuron_health(neuron,partName=partName)
                 neuron_healths.append((health, neuron))
 
             # SaÄŸlÄ±ÄŸa gÃ¶re sÄ±rala (en dÃ¼ÅŸÃ¼k saÄŸlÄ±klÄ± olanlar Ã¶nce)
@@ -871,109 +888,144 @@ class CorticalColumn:
 
         return []
 
-    def neuron_level_optimization(self, avg_error):
+    def neuron_level_optimization(self, avg_error, partName):
         """
-        GeliÅŸmiÅŸ nÃ¶ron seviyesinde optimizasyon:
-        - Fazla nÃ¶ronlarÄ± kaldÄ±rÄ±r
-        - Gereksiz nÃ¶ronlarÄ± temizler
-        - Eksik nÃ¶ronlarÄ± ekler
+        Gelişmiş nöron seviyesinde optimizasyon:
+        - Fazla nöronları kaldırır
+        - Gereksiz nöronları temizler
+        - Eksik nöronları ekler (max_hidden'i aşmadan)
         """
-        global layers
+        layers = self.parts[partName].layers
 
-        # 1. Ã–nce katman boyutlarÄ±nÄ± optimize et
-        for layer_idx in range(1, len(layers)-1):  # Hidden layerlar iÃ§in
-            excess_neurons = self.detect_excessive_neurons(layer_idx)
+        # 1. Katman boyutlarını optimize et (fazla nöron silme)
+        for idx in range(1, len(layers)-1):
+            excess_neurons = self.detect_excessive_neurons(idx, partName=partName)
             for neuron in excess_neurons:
-                self.remove_neuron_from_layer(layer_idx, neuron.id)
+                self.remove_neuron_from_layer(idx, neuron.id, partName=partName)
                 self.log_change('neuron_removed', {
                     'neuron_id': neuron.id,
-                    'layer': layer_idx,
+                    'layer': idx,
                     'reason': 'Excessive neuron count'
-                })
+                }, partName=partName)
 
-        # 2. Sonra normal saÄŸlÄ±k kontrolÃ¼ yap
+        # 2. Normal sağlık kontrolü (küçük sağlık tarihçesine bakarak)
         health_threshold = max(0.2, min(0.5, 0.3 * (1 + avg_error)))
+        for idx, layer in enumerate(layers):
+            if idx == 0 or idx == len(layers)-1:
+                continue  # giriş ve çıkış katmanını atla
+            for neuron in layer[:]:
+                health = self.calculate_neuron_health(neuron, partName=partName)
+                if health < health_threshold and len(self.neuron_health_history.get(neuron.id, [])) >= 3:
+                    last_3 = self.neuron_health_history[neuron.id][-3:]
+                    if all(h < health_threshold for h in last_3):
+                        self.remove_neuron_from_layer(idx, neuron.id, partName=partName)
+                        self.log_change('neuron_removed', {
+                            'neuron_id': neuron.id,
+                            'layer': idx,
+                            'health': health,
+                            'reason': f'Low health (<{health_threshold:.2f})'
+                        }, partName=partName)
 
-        for layer_idx, layer in enumerate(layers):
-            is_output_layer = (layer_idx == len(layers) - 1)
-            is_input_layer = (layer_idx == 0)
+        # 3. Eksik nöronları ekle (ancak max_hidden'i aşmadan)
+        for idx in range(1, len(layers)):
+            is_output = (idx == len(layers)-1)
+            input_size  = len(layers[idx-1])
+            output_size = len(layers[idx+1]) if not is_output else 0
 
-            for neuron in layer[:]:  # Kopya Ã¼zerinde dÃ¶ngÃ¼
-                health = self.calculate_neuron_health(neuron)
+            optimal = self.calculate_optimal_layer_sizes(input_size, output_size)
+            min_hidden = optimal['min_hidden']
+            max_hidden = optimal['max_hidden']
+            # Eğer yanlışlıkla min_hidden > max_hidden ise normalize et
+            if min_hidden > max_hidden:
+                min_hidden = max_hidden
 
-                if health < health_threshold and not is_output_layer and not is_input_layer:
-                    if len(self.neuron_health_history.get(neuron.id, [])) >= 3:
-                        last_3_health = self.neuron_health_history[neuron.id][-3:]
-                        if all(h < health_threshold for h in last_3_health):
-                            self.remove_neuron_from_layer(layer_idx, neuron.id)
-                            self.log_change('neuron_removed', {
-                                'neuron_id': neuron.id,
-                                'layer': layer_idx,
-                                'health': health,
-                                'reason': f'Low health (<{health_threshold:.2f})'
-                            })
+            current_size = len(layers[idx])
 
-        # 3. Eksik nÃ¶ronlarÄ± ekle
-        for layer_idx in range(1, len(layers)):
-            is_output_layer = (layer_idx == len(layers) - 1)
+            # Eğer çıktı katmanıysa, en az 1 nöron kuralı vs. farklı olabilir
+            required_min = min_hidden if not is_output else max(1, output_size)
 
-            current_size = len(layers[layer_idx])
-            input_size = len(layers[layer_idx-1])
-            output_size = len(layers[layer_idx+1]) if layer_idx+1 < len(layers) else 0
-
-            optimal_sizes = self.calculate_optimal_layer_sizes(input_size, output_size)
-
-            required_min = optimal_sizes['min_hidden'] if not is_output_layer else optimal_sizes.get('min_output', 1)
-
+            # Eksikse ekle, ama kesinlikle max_hidden'i aşma
             if current_size < required_min:
-                needed = required_min - current_size
-                for _ in range(needed):
-                    activation = defaultOutActivation if is_output_layer else defaultNeuronActivationType
+                can_add = min(required_min - current_size, max_hidden - current_size)
+                for _ in range(can_add):
+                    activation = defaultOutActivation if is_output else defaultNeuronActivationType
                     new_neuron = Neuron(activation_type=activation)
-                    layers[layer_idx].append(new_neuron)
+                    layers[idx].append(new_neuron)
                     self.log_change('neuron_added', {
                         'neuron_id': new_neuron.id,
-                        'layer': layer_idx,
-                        'reason': f'Layer too small (added to reach {required_min})'
-                    })
+                        'layer': idx,
+                        'reason': f'Layer too small (added to reach {required_min}, capped by max_hidden={max_hidden})'
+                    }, partName=partName)
 
-        # BaÄŸlantÄ±larÄ± gÃ¼ncelle
-        setConnections(preserve_weights=True)
+        # 4. Bağlantıları güncelle
+        self.parts[partName].layers=layers
+        self.parts[partName].setConnections(preserve_weights=True)
 
 
 
-    def layer_level_optimization(self, avg_error):
+    def layer_level_optimization(self, avg_error, partName):
         """
-        KatmanlarÄ± deÄŸerlendirir ve gereksiz olanlarÄ± kaldÄ±rÄ±r
+        Katmanları değerlendirir ve gereksiz olanları kaldırır.
+        1) Sağlık tabanlı silme
+        2) Giriş-çıkış boyutlarına göre fazla katman silme
         """
-        global layers
-        
-        if len(layers) <= 2:  # En az giriÅŸ ve Ã§Ä±kÄ±ÅŸ katmanÄ± olmalÄ±
+        layers = self.parts[partName].layers
+
+        # En az giriş + çıkış katmanı kalmalı
+        if len(layers) <= 2:
             return
-            
-        # Gizli katmanlarÄ±n saÄŸlÄ±ÄŸÄ±nÄ± hesapla
+
+        # Sağlık skorlarını hesapla
         layer_health_scores = []
-        for layer_idx in range(1, len(layers)-1):  # Gizli katmanlar
-            layer_health = self.calculate_layer_health(layer_idx)
-            layer_health_scores.append((layer_idx, layer_health))
-            
-        # En dÃ¼ÅŸÃ¼k saÄŸlÄ±klÄ± katmanÄ± bul
+        for idx in range(1, len(layers) - 1):
+            h = self.calculate_layer_health(idx, partName=partName)
+            layer_health_scores.append((idx, h))
         layer_health_scores.sort(key=lambda x: x[1])
-        worst_layer_idx, worst_health = layer_health_scores[0]
-        
-        # Katman saÄŸlÄ±k eÅŸiÄŸini hataya gÃ¶re dinamik ayarla
-        layer_health_threshold = max(0.3, min(0.6, 0.4 * (1 + avg_error)))
-        
-        # EÅŸik deÄŸerin altÄ±ndaysa ve yeterli katman varsa sil
-        if worst_health < layer_health_threshold and len(layers) > 3:
-            self.remove_layer(worst_layer_idx)
-            self.log_change('layer_removed', {
-                'layer_idx': worst_layer_idx,
-                'health': worst_health,
-                'reason': f'Low layer health (<{layer_health_threshold:.2f})'
-            })
+        worst_idx, worst_health = layer_health_scores[0]
+
+        # Sağlık eşiğini belirle
+        health_thresh = max(0.3, min(0.6, 0.4 * (1 + avg_error)))
+
+        # 1) Sağlık tabanlı silme
+        if worst_health < health_thresh and len(layers) > 3:
+            self.remove_layer(worst_idx, partName=partName)
+            self.log_change(
+                'layer_removed',
+                {
+                    'layer_idx': worst_idx,
+                    'health': worst_health,
+                    'reason': f'Low layer health (<{health_thresh:.2f})'
+                },
+                partName=partName
+            )
+            return
+
+        # 2) Giriş-çıkış boyutlarına göre fazla katman kontrolü
+        input_neurons  = len(layers[0])
+        output_neurons = len(layers[-1])
+        # İzin verilen maksimum gizli katman sayısı
+        max_hidden = max(1, (input_neurons + output_neurons) // 2)
+        curr_hidden = len(layers) - 2
+
+        if curr_hidden > max_hidden:
+            # Fazla sayıda gizli katman var, en düşük sağlığa sahip katmanı sil
+            self.remove_layer(worst_idx, partName=partName)
+            self.log_change(
+                'layer_removed',
+                {
+                    'layer_idx': worst_idx,
+                    'health': worst_health,
+                    'reason': (
+                        f'Excess hidden layers: {curr_hidden} > {max_hidden} '
+                        f'for input={input_neurons}, output={output_neurons}'
+                    )
+                },
+                partName=partName
+            )
+            return
+
     
-    def strategic_growth(self, avg_error):
+    def strategic_growth(self, avg_error,partName):
         """
         AÄŸÄ±n bÃ¼yÃ¼mesini stratejik olarak yÃ¶netir:
         - ZayÄ±f katmanlarÄ± gÃ¼Ã§lendirir
@@ -981,53 +1033,52 @@ class CorticalColumn:
         - GerektiÄŸinde yeni katman ekler
         """
         # 1. ZayÄ±f katmanlarÄ± gÃ¼Ã§lendir
-        self.strengthen_weak_layers(avg_error)
+        self.strengthen_weak_layers(avg_error,partName=partName)
         
         # 2. Kritik bÃ¶lgelere nÃ¶ron ekle
-        self.add_neurons_to_critical_areas()
+        self.add_neurons_to_critical_areas(partName=partName)
         
         # 3. Gerekirse yeni katman ekle
-        self.add_layer_if_needed(avg_error)
+        self.add_layer_if_needed(avg_error,partName=partName)
     
-    def strengthen_weak_layers(self, avg_error):
+    def strengthen_weak_layers(self, avg_error,partName):
         """
         ZayÄ±f katmanlara nÃ¶ron ekler
         """
-        global layers
+        
         
         complexity_factor = max(0.4, min(0.8, 0.5 * (1 + avg_error)))
         
-        for layer_idx in range(1, len(layers)-1):  # Gizli katmanlar
-            layer_health = self.calculate_layer_health(layer_idx)
+        for layer_idx in range(1, len(self.parts[partName].layers)-1):  # Gizli katmanlar
+            layer_health = self.calculate_layer_health(layer_idx,partName=partName)
             if layer_health < complexity_factor:
                 # Katmana 1-2 nÃ¶ron ekle
-                num_neurons_to_add = 1 if len(layers[layer_idx]) < 10 else 2
+                num_neurons_to_add = 1 if len(self.parts[partName].layers[layer_idx]) < 10 else 2
                 for _ in range(num_neurons_to_add):
-                    new_neuron = self.add_neuron_to_layer(layer_index=layer_idx)
+                    new_neuron = self.add_neuron_to_layer(layer_index=layer_idx,partName=partName)
                     self.log_change('neuron_added', {
                         'neuron_id': new_neuron.id,
                         'layer': layer_idx,
                         'reason': f'Strengthening weak layer (health={layer_health:.2f})'
-                    })
+                    },partName=partName)
     
-    def add_neurons_to_critical_areas(self):
+    def add_neurons_to_critical_areas(self,partName):
         """
         YÃ¼ksek hata Ã¼reten veya yÃ¼ksek Ã¶ÄŸrenme potansiyeli olan bÃ¶lgelere nÃ¶ron ekler
         """
-        global layers
         
         # En yÃ¼ksek aktivasyon tÃ¼revine sahip nÃ¶ronun katmanÄ±na ekleme yap
         max_derivative = -1
         target_layer = None
         
-        for layer_idx, layer in enumerate(layers):
+        for layer_idx, layer in enumerate(self.parts[partName].layers):
             for neuron in layer:
                 derivative = neuron.activation_derivative()
                 if derivative > max_derivative:
                     max_derivative = derivative
                     target_layer = layer_idx
                     
-        if target_layer is not None and target_layer < len(layers)-1 and target_layer != 0:
+        if target_layer is not None and target_layer < len(self.parts[partName].layers)-1 and target_layer != 0:
             new_neuron = self.add_neuron_to_layer(layer_index=target_layer)
             self.log_change('neuron_added', {
                 'neuron_id': new_neuron.id,
@@ -1035,20 +1086,19 @@ class CorticalColumn:
                 'reason': f'High learning potential (derivative={max_derivative:.2f})'
             })
     
-    def add_layer_if_needed(self, avg_error):
+    def add_layer_if_needed(self, avg_error,partName):
         """
         AÄŸÄ±n karmaÅŸÄ±klÄ±ÄŸÄ± yeterli deÄŸilse yeni katman ekler
         """
-        global layers
         
-        if len(layers) >= 5:  # Maksimum 5 katman (giriÅŸ + 3 gizli + Ã§Ä±kÄ±ÅŸ)
+        if len(self.parts[partName].layers) >= 5:  # Maksimum 5 katman (giriÅŸ + 3 gizli + Ã§Ä±kÄ±ÅŸ)
             return
             
         # Ortalama katman saÄŸlÄ±ÄŸÄ±nÄ± hesapla
         total_health = 0
-        for layer_idx in range(1, len(layers)-1):
-            total_health += self.calculate_layer_health(layer_idx)
-        avg_health = total_health / (len(layers)-2) if len(layers) > 2 else 0
+        for layer_idx in range(1, len(self.parts[partName].layers)-1):
+            total_health += self.calculate_layer_health(layer_idx,partName=partName)
+        avg_health = total_health / (len(self.parts[partName].layers)-2) if len(self.parts[partName].layers) > 2 else 0
         
         complexity_factor = max(0.4, min(0.7, 0.5 * (1 + avg_error)))
         
@@ -1056,8 +1106,8 @@ class CorticalColumn:
             # En yÃ¼klÃ¼ katmanÄ± bul
             max_load = -1
             busiest_layer = None
-            for layer_idx in range(1, len(layers)-1):
-                load = len(layers[layer_idx]) * self.calculate_connection_density(layer_idx)
+            for layer_idx in range(1, len(self.parts[partName].layers)-1):
+                load = len(self.parts[partName].layers[layer_idx]) * self.calculate_connection_density(layer_idx)
                 if load > max_load:
                     max_load = load
                     busiest_layer = layer_idx
@@ -1069,22 +1119,21 @@ class CorticalColumn:
                     'reason': f'High layer load (load={max_load:.2f}, avg_health={avg_health:.2f})'
                 })
     
-    def calculate_layer_health(self, layer_idx):
+    def calculate_layer_health(self, layer_idx,partName):
         """
         Bir katmanÄ±n genel saÄŸlÄ±k skorunu hesaplar
         """
-        global layers
         
-        layer = layers[layer_idx]
+        layer = self.parts[partName].layers[layer_idx]
         if not layer:
             return 0
             
         # Katmandaki nÃ¶ronlarÄ±n ortalama saÄŸlÄ±ÄŸÄ±
-        total_health = sum(self.calculate_neuron_health(neuron) for neuron in layer)
+        total_health = sum(self.calculate_neuron_health(neuron,partName=partName) for neuron in layer)
         avg_neuron_health = total_health / len(layer)
         
         # KatmanÄ±n baÄŸlantÄ± yoÄŸunluÄŸu
-        connection_density = self.calculate_connection_density(layer_idx)
+        connection_density = self.calculate_connection_density(layer_idx,partName=partName)
         
         # KatmanÄ±n Ã¶ÄŸrenme potansiyeli (aktivasyon tÃ¼revlerinin ortalamasÄ±)
         learning_potential = np.mean([neuron.activation_derivative() for neuron in layer])
@@ -1094,59 +1143,57 @@ class CorticalColumn:
         
         return layer_health
     
-    def calculate_connection_density(self, layer_idx):
+    def calculate_connection_density(self, layer_idx,partName):
         """
         Katmandaki baÄŸlantÄ± yoÄŸunluÄŸunu hesaplar
         """
-        global layers, connections
         
         if layer_idx == 0:  # GiriÅŸ katmanÄ±
-            prev_layer_size = len(layers[layer_idx])
-            current_layer_size = len(layers[layer_idx+1])
+            prev_layer_size = len(self.parts[partName].layers[layer_idx])
+            current_layer_size = len(self.parts[partName].layers[layer_idx+1])
             total_possible = prev_layer_size * current_layer_size
-        elif layer_idx == len(layers)-1:  # Ã‡Ä±kÄ±ÅŸ katmanÄ±
+        elif layer_idx == len(self.parts[partName].layers)-1:  # Ã‡Ä±kÄ±ÅŸ katmanÄ±
             return 1.0  # Ã‡Ä±kÄ±ÅŸ katmanÄ± iÃ§in maksimum yoÄŸunluk
         else:
-            prev_layer_size = len(layers[layer_idx-1])
-            current_layer_size = len(layers[layer_idx])
-            next_layer_size = len(layers[layer_idx+1])
+            prev_layer_size = len(self.parts[partName].layers[layer_idx-1])
+            current_layer_size = len(self.parts[partName].layers[layer_idx])
+            next_layer_size = len(self.parts[partName].layers[layer_idx+1])
             total_possible = (prev_layer_size * current_layer_size) + (current_layer_size * next_layer_size)
         
         # GerÃ§ek baÄŸlantÄ± sayÄ±sÄ±nÄ± hesapla
         actual_connections = 0
         if layer_idx > 0:
-            for conn_list in connections[layer_idx-1].values():
+            for conn_list in self.parts[partName].connections[layer_idx-1].values():
                 actual_connections += len(conn_list)
         
-        if layer_idx < len(layers)-1:
-            for conn_list in connections[layer_idx].values():
+        if layer_idx < len(self.parts[partName].layers)-1:
+            for conn_list in self.parts[partName].connections[layer_idx].values():
                 actual_connections += len(conn_list)
                 
         return actual_connections / total_possible if total_possible > 0 else 0
     
-    def remove_layer(self, layer_idx):
+    def remove_layer(self, layer_idx,partName):
         """
         Bir katmanÄ± ve iliÅŸkili baÄŸlantÄ±larÄ± kaldÄ±rÄ±r.
         Silme sonrasÄ± baÄŸlantÄ± sÃ¶zlÃ¼ÄŸÃ¼nÃ¼ tutarlÄ± hale getirmek iÃ§in
         setConnections ile yeniden Ã¶rÃ¼lÃ¼yoruz.
         """
-        global layers, connections
 
-        if layer_idx <= 0 or layer_idx >= len(layers)-1:
+        if layer_idx <= 0 or layer_idx >= len(self.parts[partName].layers)-1:
             print("Hata: GiriÅŸ veya Ã§Ä±kÄ±ÅŸ katmanÄ± silinemez")
             return False
 
         # KatmanÄ± kaldÄ±r
-        del layers[layer_idx]
+        del self.parts[partName].layers[layer_idx]
 
         # Eski connections anahtarlarÄ±nÄ± da temizle
         # (KeyError vermemesi iÃ§in get ile guardlÄ±yoruz)
-        connections.pop(layer_idx-1, None)
-        connections.pop(layer_idx,   None)
+        self.parts[partName].connections.pop(layer_idx-1, None)
+        self.parts[partName].connections.pop(layer_idx,   None)
 
         # Kalan aÄŸÄ±rlÄ±klarÄ± koruyarak tÃ¼m baÄŸlantÄ±larÄ± yeniden inÅŸa et
         # BÃ¶ylece indekste kayma ya da eksik anahtar kalma riski ortadan kalkar
-        setConnections(preserve_weights=True)
+        self.parts[partName].setConnections(preserve_weights=True)
 
         if debug:
             print(f"Katman {layer_idx} silindi ve baÄŸlantÄ±lar yeniden oluÅŸturuldu.")
@@ -1155,48 +1202,47 @@ class CorticalColumn:
         return True
 
     
-    def insert_hidden_layer(self, position):
+    def insert_hidden_layer(self, position,partName):
         """
         Belirtilen pozisyona yeni bir gizli katman ekler
         """
-        global layers, connections
 
-        if position <= 0 or position >= len(layers):
+        if position <= 0 or position >= len(self.parts[partName].layers):
             print("Hata: GeÃ§ersiz katman pozisyonu")
             return False
 
         # Yeni katman oluÅŸtur (mevcut katmanlarÄ±n ortalamasÄ± kadar nÃ¶ronla)
-        size = (len(layers[position - 1]) + len(layers[position])) // 2
+        size = (len(self.parts[partName].layers[position - 1]) + len(self.parts[partName].layers[position])) // 2
         new_layer = [Neuron(activation_type=defaultNeuronActivationType) for _ in range(max(2, size))]
 
         # KatmanÄ± ekle
         layers.insert(position, new_layer)
 
         # connections sÃ¶zlÃ¼ÄŸÃ¼ne yeni boÅŸ dict alanÄ± ekle
-        connections.insert(position - 1, {})
-        connections.insert(position, {})
+        self.parts[partName].connections.insert(position - 1, {})
+        self.parts[partName].connections.insert(position, {})
 
         # Ã–nceki katmandan yeni katmana baÄŸlantÄ±lar oluÅŸtur
-        for prev_neuron in layers[position - 1]:
+        for prev_neuron in self.parts[partName].layers[position - 1]:
             for new_neuron in new_layer:
-                weight = np.random.uniform(-1, 1) * np.sqrt(2.0 / (len(layers[position - 1]) + len(new_layer)))
+                weight = np.random.uniform(-1, 1) * np.sqrt(2.0 / (len(self.parts[partName].layers[position - 1]) + len(new_layer)))
                 conn = Connection(connectedToArg=[prev_neuron.id, new_neuron.id], weight=weight)
 
-                if prev_neuron.id not in connections[position - 1]:
-                    connections[position - 1][prev_neuron.id] = []
+                if prev_neuron.id not in self.parts[partName].connections[position - 1]:
+                    self.parts[partName].connections[position - 1][prev_neuron.id] = []
 
-                connections[position - 1][prev_neuron.id].append(conn)
+                self.parts[partName].connections[position - 1][prev_neuron.id].append(conn)
 
         # Yeni katmandan sonraki katmana baÄŸlantÄ±lar oluÅŸtur
         for new_neuron in new_layer:
-            for next_neuron in layers[position + 1]:
-                weight = np.random.uniform(-1, 1) * np.sqrt(2.0 / (len(new_layer) + len(layers[position + 1])))
+            for next_neuron in self.parts[partName].layers[position + 1]:
+                weight = np.random.uniform(-1, 1) * np.sqrt(2.0 / (len(new_layer) + len(self.parts[partName].layers[position + 1])))
                 conn = Connection(connectedToArg=[new_neuron.id, next_neuron.id], weight=weight)
 
-                if new_neuron.id not in connections[position]:
-                    connections[position][new_neuron.id] = []
+                if new_neuron.id not in self.parts[partName].connections[position]:
+                    self.parts[partName].connections[position][new_neuron.id] = []
 
-                connections[position][new_neuron.id].append(conn)
+                self.parts[partName].connections[position][new_neuron.id].append(conn)
 
         return position
 
@@ -1681,7 +1727,7 @@ class CorticalColumn:
             return np.mean((target - output) ** 2)
 
 
-        def train_network(self,X_train, y_train, batch_size=1, epochs=None, intelligenceValue=None, learning_rate=0.05,useDynamicModelChanges=True,symbol="",epochNumberForLimitError=None,returnModelFile=False):
+        def train_network(self,X_train, y_train,corticalColumn, batch_size=1, epochs=None, intelligenceValue=None, learning_rate=0.05,useDynamicModelChanges=True,symbol="",epochNumberForLimitError=None,returnModelFile=False):
 
 
             if self.enable_logging:
@@ -1693,16 +1739,13 @@ class CorticalColumn:
             newLR = 0.0
 
             signal.signal(signal.SIGINT, self.signal_handler)
-
-            cortical_column = self.outerCorticalClass(learning_rateArg=learning_rate, targetError=epochs if epochs <1 else None,
-                                             maxEpochForTargetError=8000 if epochNumberForLimitError==None else epochNumberForLimitError,
-                                             originalNetworkModel=[len(liste) for liste in self.layers],useDynamicModelChanges=useDynamicModelChanges,targetEpoch=None if epochs <1 else epochs)
-
+            print("Debug:",type(corticalColumn))
+            cortical_column = self.outerCorticalClass
 
             avg_error = float('inf')
             epoch = 0
             total_samples = len(X_train)
-            start_time = time.time()
+            self.start_time = time.time()
 
             if len(self.layers[0]) != len(X_train[0]):
                 print(f"UyarÄ±: GiriÅŸ boyutu uyumsuz! AÄŸ giriÅŸi: {len(self.layers[0])}, Veri giriÅŸi: {len(X_train[0])}")
@@ -1715,8 +1758,7 @@ class CorticalColumn:
                     processed_samples = 0
                     epoch_gradients = []
                     korteksChanges = []
-
-                    newLR,_ = cortical_column.monitor_network(avg_error)
+                    newLR,_ = cortical_column.monitor_network(avg_error,partName=self.partName)
                     if _ is not None and epochs < 1 :
                         epochs = _
 
@@ -1728,7 +1770,7 @@ class CorticalColumn:
                         batch_error = 0
 
                         for X, y in zip(X_batch, y_batch):
-                            cortical_column.backpropagation(X, y)
+                            cortical_column.backpropagation(X, y,partName=self.partName)
 
                             output = [neuron.value for neuron in self.layers[-1][:len(y)]]
                             error = self.hata_payi(y, output)
@@ -1764,8 +1806,9 @@ class CorticalColumn:
                         if epoch % 50 == 0 and debug:
                             cortical_column.log_change('epoch_summary', {
                                 'average_error': avg_error,
-                                'batch_progress': processed_samples/total_samples
-                            })
+                                'batch_progress': processed_samples/total_samples,
+                                'partName':self.partName
+                            },partName=self.partName)
                         break
                     
                     epoch += 1
@@ -1797,8 +1840,9 @@ class CorticalColumn:
                     cortical_column.log_change('training_error', {
                         'error_type': str(type(e)),
                         'message': str(e),
-                        'last_epoch': epoch
-                    })
+                        'last_epoch': epoch,
+                        'partName':self.partName
+                    },partName=self.partName)
                 raise
             if returnModelFile:
                 return filename
@@ -2137,7 +2181,7 @@ class CorticalColumn:
                              epochs=None,
                              batch_size=None,
                              learning_rate=None,
-                             intelligenceValue=None,useDynamicModelChanges=True,symbol="",epochNumberForLimitError=None,returnModelFile=False) -> str:
+                             intelligenceValue=None,useDynamicModelChanges=True,symbol="",epochNumberForLimitError=None,returnModelFile=False,corticalColumn=None) -> str:
             """Train network with custom data"""
             try:
                 self.setLayers(network_structure or [2,4,1])
@@ -2151,7 +2195,7 @@ class CorticalColumn:
                     train_kwargs['learning_rate'] = learning_rate
                 if intelligenceValue is not None:
                     train_kwargs['intelligenceValue'] = intelligenceValue
-                filename = self.train_network(X, y, **train_kwargs,useDynamicModelChanges=useDynamicModelChanges,symbol=symbol,epochNumberForLimitError=epochNumberForLimitError,returnModelFile=returnModelFile)
+                filename = self.train_network(X, y, **train_kwargs,useDynamicModelChanges=useDynamicModelChanges,symbol=symbol,epochNumberForLimitError=epochNumberForLimitError,returnModelFile=returnModelFile,corticalColumn=corticalColumn)
                 if returnModelFile:
                     return filename
                 else:
@@ -2199,17 +2243,25 @@ class CorticalColumn:
                 return {'error': str(e)}
 
 
+file_path="parity_problem.csv"
+network_structure=[4,1,1,1,1,2]
 
 
-AI=CorticalColumn()
+#def train_network(self,X_train, y_train,corticalColumn, batch_size=1, epochs=None, intelligenceValue=None, learning_rate=0.05,
+#useDynamicModelChanges=True,symbol="",epochNumberForLimitError=None,returnModelFile=False):
+epochs = 0.05
+AI=CorticalColumn(learning_rateArg=0.05, targetError=epochs if epochs <1 else None,
+                                             maxEpochForTargetError=None,
+                                             originalNetworkModel=network_structure,useDynamicModelChanges=True,targetEpoch=None if epochs <1 else epochs)
 AI.createPartOfAI("one")
 
+filename=AI.parts["one"].cmd_train_custom(file_path=file_path,network_structure=network_structure,epochs=epochs,learning_rate=1,returnModelFile=True,corticalColumn=AI)
+print(filename)
 
+AI.parts["one"].cmd_load_model(filename)
+AI.parts["one"].cmd_set_input([1,0,0,0])
+print(AI.parts["one"].cmd_refresh())
 
-
-
-#file_path="parity_problem.csv"
-#network_structure=[4,1,2]
 #
 #trainingModelFile = cmd_train_custom(file_path=file_path,network_structure=network_structure,epochs=0.1,learning_rate=1,returnModelFile=True)
 ##hata=testModel(file_path.replace("trainingDatas/", "trainingDatas/test"),inputNum=network_structure[0],targetNum=network_structure[-1],DONTVisualize=True)

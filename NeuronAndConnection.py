@@ -1,3 +1,6 @@
+import numpy as np
+
+
 class Neuron:
     next_id = 0  # Global olarak artan ID deÄŸeri
     
