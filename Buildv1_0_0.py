@@ -1729,7 +1729,7 @@ class CorticalColumn:
 
         def train_network(self,X_train, y_train,corticalColumn, batch_size=1, epochs=None, intelligenceValue=None, learning_rate=0.05,useDynamicModelChanges=True,symbol="",epochNumberForLimitError=None,returnModelFile=False):
 
-
+            print("Eğitim aşaması...")
             if self.enable_logging:
                 print("Hata grafiÄŸi kaydÄ± etkin. EÄŸitim sonunda grafik oluÅŸturulacak.")
 
@@ -1739,7 +1739,6 @@ class CorticalColumn:
             newLR = 0.0
 
             signal.signal(signal.SIGINT, self.signal_handler)
-            print("Debug:",type(corticalColumn))
             cortical_column = self.outerCorticalClass
 
             avg_error = float('inf')
@@ -2244,23 +2243,29 @@ class CorticalColumn:
 
 
 file_path="parity_problem.csv"
-network_structure=[4,1,1,1,1,2]
+network_structure=[4,1,1,2]
 
 
 #def train_network(self,X_train, y_train,corticalColumn, batch_size=1, epochs=None, intelligenceValue=None, learning_rate=0.05,
 #useDynamicModelChanges=True,symbol="",epochNumberForLimitError=None,returnModelFile=False):
-epochs = 0.05
+epochs = 0.3
 AI=CorticalColumn(learning_rateArg=0.05, targetError=epochs if epochs <1 else None,
                                              maxEpochForTargetError=None,
                                              originalNetworkModel=network_structure,useDynamicModelChanges=True,targetEpoch=None if epochs <1 else epochs)
-AI.createPartOfAI("one")
 
-filename=AI.parts["one"].cmd_train_custom(file_path=file_path,network_structure=network_structure,epochs=epochs,learning_rate=1,returnModelFile=True,corticalColumn=AI)
-print(filename)
+parts=["one"]
+for part in parts:
+    AI.createPartOfAI(part)
+    print("Eğitime başlanıyor...")
+    filename=AI.parts[part].cmd_train_custom(file_path=file_path,symbol=part,network_structure=network_structure,epochs=epochs,learning_rate=1,returnModelFile=True,corticalColumn=AI)
+    print("Eğitim bitti:",filename)
 
-AI.parts["one"].cmd_load_model(filename)
-AI.parts["one"].cmd_set_input([1,0,0,0])
-print(AI.parts["one"].cmd_refresh())
+    #AI.parts[part].cmd_load_model(filename)
+    #AI.parts[part].cmd_set_input([1,0,0,0])
+    outputValues,_,_=AI.parts[part].cmd_refresh()
+    print(outputValues)
+
+
 
 #
 #trainingModelFile = cmd_train_custom(file_path=file_path,network_structure=network_structure,epochs=0.1,learning_rate=1,returnModelFile=True)
