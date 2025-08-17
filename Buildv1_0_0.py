@@ -54,6 +54,8 @@ from datetime import datetime
 
 from NeuronAndConnection import Neuron ,Connection
 
+import threading
+import socket
 
 
 debug=False
@@ -85,9 +87,16 @@ class CorticalColumn:
     
     def __init__(self,log_file="network_changes.log", learning_rateArg=0.3,targetError=None,
                  maxEpochForTargetError=1000,originalNetworkModel=None,
-                 overfit_threshold=0.9,useDynamicModelChanges=True,targetEpoch=None):
+                 overfit_threshold=0.9,useDynamicModelChanges=True,targetEpoch=None,enable_dynamic_control=False):
         
         
+        self.enable_dynamic_control = enable_dynamic_control
+
+        if self.enable_dynamic_control:
+            thread = threading.Thread(target=self._command_listener, daemon=True)
+            thread.start()
+            print("[CorticalColumn] Dinamik kontrol aktif. Komutları dinliyor...")
+
         self.firstLearningRate = learning_rateArg
         self.learningRate = learning_rateArg
         self.neuronHealtThreshould = 0.3
@@ -126,6 +135,89 @@ class CorticalColumn:
         # Log dosyasÄ±nÄ± baÅŸlat (varsa sil, yenisini oluÅŸtur)
         with open(self.log_file, 'w') as f:
             f.write("")  # BoÅŸ dosya oluÅŸtur
+
+    
+    
+    # -----------------------------
+    # Socket üzerinden komut dinleyici
+    # -----------------------------
+    def _command_listener(self, host='localhost', port=5050):
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.bind((host, port))
+        s.listen(1)
+        print(f"[CommandServer] {host}:{port} dinleniyor...")
+
+        while True:
+            conn, addr = s.accept()
+            data = conn.recv(1024).decode().strip()
+            if not data:
+                conn.close()
+                continue
+
+            print(f"[CommandServer] Komut alındı: {data}")
+            self._handle_command(data)
+            conn.close()
+
+    def _handle_command(self, cmd: str):
+        tokens = cmd.split()
+
+        if len(tokens) < 2:
+            print("[CommandServer] Geçersiz komut.")
+            return
+
+        if tokens[0].lower() == "set":
+            if tokens[1].lower() == "lr":
+                # set lr 0.3
+                try:
+                    new_lr = float(tokens[2])
+                    self.learningRate = new_lr
+                    print(f"[CorticalColumn] Learning rate güncellendi: {new_lr}")
+                except:
+                    print("[CommandServer] Hatalı lr değeri.")
+
+            elif tokens[1].lower() == "model":
+                # örnek: set model partName layers [2,4,1] False
+                if len(tokens) >= 5 and tokens[3].lower() == "layers":
+                    partName = tokens[2]
+                    if partName in self.parts:
+                        try:
+                            # "layers" sonrası stringi al
+                            layer_str = cmd.split("layers",1)[1].strip()
+
+                            # Opsiyonel preserve_weights kontrolü
+                            preserve_weights = True  # default
+                            if layer_str.lower().endswith("false"):
+                                preserve_weights = False
+                                layer_str = layer_str.rsplit(" ", 1)[0].strip()
+                            elif layer_str.lower().endswith("true"):
+                                preserve_weights = True
+                                layer_str = layer_str.rsplit(" ", 1)[0].strip()
+
+                            layer_list = eval(layer_str)  # güvenlik için parser yazabilirsin
+
+                            self.parts[partName].setLayers(layer_list, preserve_weights=preserve_weights)
+                            print(f"[CorticalColumn] {partName} için katmanlar güncellendi "
+                                  f"{'' if preserve_weights else 've model ağırlıkları sıfırlandı'}: {layer_list}, preserve_weights={preserve_weights}")
+                        except Exception as e:
+                            print(f"[CommandServer] Hatalı model layer değeri: {e}")
+                    else:
+                        print(f"[CommandServer] Böyle bir parça yok: {partName}")
+
+        
+        elif tokens[0].lower() == "get":
+            if tokens[1].lower() == "lr":
+                print("[CorticalColumn] lr değeri:",self.learningRate)
+            elif tokens[1].lower() == "model":
+                if tokens[2].lower() in self.parts:
+
+                    layers = self.parts[tokens[2]].layers
+                    layer_ids = [[neuron.id for neuron in layer] for layer in layers]
+                    print(f"{tokens[2]} isimli modelin nöron id’leri: {layer_ids}")
+                else:
+                    print("Model bulunamadı.")
+        else:
+            print("[CommandServer] Bilinmeyen komut.")
+
     
 
     def createPartOfAI(self,partName):
@@ -150,7 +242,7 @@ class CorticalColumn:
             'elapsed_seconds': round(time.time() - self.log_start_time, 2),
             'type': change_type,
             'details': details,
-            'partName': partName if partName is not None else "None"
+            'partName': partName if partName is not None else ("None")
         }
 
         if partName is not None and partName in self.parts:
@@ -275,7 +367,7 @@ class CorticalColumn:
             # This helps ensure the learning rate doesn't stay too high for too long
             
             # Get new learning rate based on loss trend
-            new_lr = self.update_learning_rate(self.learningRate, self.loss_history,slopeArg=slope)
+            new_lr = self.update_learning_rate(self.learningRate, self.loss_history,slopeArg=slope,partName=partName)
             
             # If learning rate changed significantly, reset cooldown counter
 
@@ -306,7 +398,7 @@ class CorticalColumn:
                              patience=60, # Increased from 20
                              min_lr=0.1, max_lr=4.0,  # Reduced max_lr
                              factor=0.0005,  # Reduced from 0.002
-                             threshold=1e-2, increase_threshold=5e-2,slopeArg=None):  # More conservative increase threshold
+                             threshold=1e-2, increase_threshold=5e-2,slopeArg=None,partName="None"):  # More conservative increase threshold
         """
         Updates learning rate based on loss history trends with improved stability.
         
@@ -346,7 +438,7 @@ class CorticalColumn:
         if len(loss_history)>=100:
             if abs(loss_history[-1]-loss_history[-100]) < 0.0002 :
                 new_lr=0.7
-                self.log_change('slope is close to 0 lr_up',{'slope':slopeArg,'old_lr':current_lr,'new_lr':new_lr,'last 1 and last 100 error different':abs(loss_history[-1]-loss_history[-100])})
+                self.log_change('slope is close to 0 lr_up',{'slope':slopeArg,'old_lr':current_lr,'new_lr':new_lr,'last 1 and last 100 error different':abs(loss_history[-1]-loss_history[-100])},partName=partName)
                 return min(new_lr,max_lr)
         # Analyze recent and previous loss trends
         recent_losses = loss_history[-patience:]
@@ -1216,7 +1308,7 @@ class CorticalColumn:
         new_layer = [Neuron(activation_type=defaultNeuronActivationType) for _ in range(max(2, size))]
 
         # KatmanÄ± ekle
-        layers.insert(position, new_layer)
+        self.parts[partName].layers.insert(position, new_layer)
 
         # connections sÃ¶zlÃ¼ÄŸÃ¼ne yeni boÅŸ dict alanÄ± ekle
         self.parts[partName].connections.insert(position - 1, {})
@@ -1364,7 +1456,7 @@ class CorticalColumn:
                             new_connections[layer_idx][neuron.id] = []
                         new_connections[layer_idx][neuron.id].append(conn)
             self.connections = new_connections
-        def setLayers(self,neuronInLayers):
+        def setLayers(self,neuronInLayers,preserve_weights=False):
             """KatmanlarÄ± ve nÃ¶ron sayÄ±larÄ±nÄ± ayarlar"""
             self.layers=[]  # Ã–nceki katmanlarÄ± temizle
             
@@ -1379,7 +1471,7 @@ class CorticalColumn:
                     for _ in range(neuronCount)
                 ]
                 self.layers.append(layer)
-            self.setConnections(preserve_weights=False)
+            self.setConnections(preserve_weights=preserve_weights)
 
         def createFileName(self,symbol=""):
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -2242,29 +2334,82 @@ class CorticalColumn:
                 return {'error': str(e)}
 
 
-file_path="parity_problem.csv"
-network_structure=[4,1,1,2]
 
 
-#def train_network(self,X_train, y_train,corticalColumn, batch_size=1, epochs=None, intelligenceValue=None, learning_rate=0.05,
-#useDynamicModelChanges=True,symbol="",epochNumberForLimitError=None,returnModelFile=False):
-epochs = 0.3
-AI=CorticalColumn(learning_rateArg=0.05, targetError=epochs if epochs <1 else None,
-                                             maxEpochForTargetError=None,
-                                             originalNetworkModel=network_structure,useDynamicModelChanges=True,targetEpoch=None if epochs <1 else epochs)
 
-parts=["one"]
+
+
+
+# Kullanıcıdan input al, boş bırakırsa default değer kalsın
+def get_input(prompt, default, cast_func=str):
+    val = input(f"{prompt} (default={default}): ").strip()
+    return cast_func(val) if val else default
+
+
+
+
+epochs = get_input("Epochs değerini gir", 0.1, float)
+enable_dynamic_control = get_input("Dynamic control aktif mi? (True/False)", False, lambda v: v.lower() == "true") #echo "set model VisionAI layers [3,5,2]" | nc localhost 5050
+
+learning_rate = get_input("Learning rate gir", 0.05, float)
+maxEpochForTargetError = get_input("maxEpochForTargetError gir", None, lambda v: int(v) if v else None)
+targetEpoch = get_input("targetEpoch gir", None, lambda v: int(v) if v else None)
+
+# parts input (virgülle ayırarak girilecek)
+
+useDynamicModelChanges = get_input("Dinamik olarak değişen yapı? (True/False)",True,lambda v:v.lower() == "true")
+
+
+
+
+
+
+parts = get_input("Parçaları gir (virgülle ayır, boş bırak default=one)", ["one"], lambda v: [p.strip() for p in v.split(",")])
+
+filePaths = {}
+network_structures = {}
+
 for part in parts:
+    file_path = get_input(f"{part} için csv dosya yolu", "parity_problem.csv", str)
+    network_structure = get_input(
+        f"{part} için network yapısı (virgülle ayır, örn: 4,1,1,2)", 
+        [4, 1, 1, 2], 
+        lambda v: [int(x.strip()) for x in v.split(",")]
+    )
+    filePaths[part] =  file_path
+    network_structures[part] = network_structure
+
+print()
+
+AI = CorticalColumn(
+    learning_rateArg=learning_rate,
+    targetError=epochs if epochs < 1 else None,
+    maxEpochForTargetError=maxEpochForTargetError,
+    useDynamicModelChanges=useDynamicModelChanges,
+    targetEpoch=None if epochs < 1 else targetEpoch,
+    enable_dynamic_control=enable_dynamic_control
+)
+
+print()
+for part in parts:
+
     AI.createPartOfAI(part)
-    print("Eğitime başlanıyor...")
-    filename=AI.parts[part].cmd_train_custom(file_path=file_path,symbol=part,network_structure=network_structure,epochs=epochs,learning_rate=1,returnModelFile=True,corticalColumn=AI)
-    print("Eğitim bitti:",filename)
-
-    #AI.parts[part].cmd_load_model(filename)
-    #AI.parts[part].cmd_set_input([1,0,0,0])
-    outputValues,_,_=AI.parts[part].cmd_refresh()
-    print(outputValues)
-
+    print(f"{part} için eğitime başlanıyor...")
+    filename = AI.parts[part].cmd_train_custom(
+        file_path=filePaths[part],
+        symbol=part,
+        network_structure=network_structures[part],
+        epochs=epochs,
+        learning_rate=learning_rate,
+        returnModelFile=True,
+        corticalColumn=AI
+    )
+    print(f"{part} için eğitim bitti:", filename)
+    print()
+    # Örnek giriş
+    #AI.parts[part].cmd_set_input([1, 0, 0, 0])
+    #outputValues, _, _ = AI.parts[part].cmd_refresh()
+    #print(f"{part} çıkışı:", outputValues)
 
 
 #
