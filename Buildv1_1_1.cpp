@@ -53,6 +53,7 @@ public:
         int lrChanged = 0;
 
         double learningRate = 0.5;
+        int modelChangedSelf = 0;
 
         // Sigmoid ve tanh aktivasyonlari
         double activate(double x)
@@ -69,38 +70,38 @@ public:
             return s * (1 - s);
         }
 
-        // YENİ: Piramit yapıya göre fazla nöronları sil
-        // DÜZELTİLMİŞ: Piramit yapıya göre fazla nöronları sil
-        // DÜZELTİLMİŞ: Piramit yapıya göre fazla nöronları sil
-        void removeExcessNeuronsFromPyramid()
+        // YENI: Piramit yapiya gore fazla noronlari sil
+        // DUZELTILMIS: Piramit yapiya gore fazla noronlari sil
+        // DUZELTILMIS: Piramit yapiya gore fazla noronlari sil
+        bool removeExcessNeuronsFromPyramid()
         {
-            // weights.size() = katman sayısı - 1 (sadece bağlantılar)
-            // Örnek: 4,99,2 → weights.size() = 2 (hidden→output)
+            // weights.size() = katman sayisi - 1 (sadece baglantilar)
+            // Ornek: 4,99,2 → weights.size() = 2 (hidden→output)
 
             if (weights.size() < 1)
-            { // En az 1 hidden layer olmalı
+            { // En az 1 hidden layer olmali
                 cout << "Not enough layers for pyramid optimization" << endl;
-                return;
+                return false;
             }
 
-            // Giriş ve çıkış boyutlarını al
+            // Giris ve cikis boyutlarini al
             size_t inputSize = (weights.size() > 0) ? weights[0][0].size() : 0;
             size_t outputSize = (weights.size() > 0) ? weights.back().size() : 0;
 
             if (inputSize == 0 || outputSize == 0)
             {
                 cout << "Invalid network structure" << endl;
-                return;
+                return false;
             }
 
-            // İdeal piramit yapısını hesapla (SADECE hidden layer'lar için)
-            // weights.size() = hidden layer sayısı (4,99,2 → 1 hidden layer)
-            vector<size_t> idealSizes = calculatePyramidStructure(inputSize, outputSize, weights.size());
+            // Ideal piramit yapisini hesapla (SADECE hidden layer'lar icin)
+            // weights.size() = hidden layer sayisi (4,99,2 → 1 hidden layer)
+            vector<size_t> idealSizes = calculatePyramidStructure(inputSize, outputSize, weights.size() - 1);
 
             if (debug)
             {
                 cout << "Input size: " << inputSize << ", Output size: " << outputSize << endl;
-                cout << "Number of hidden layers: " << weights.size() << endl;
+                cout << "Number of hidden layers: " << weights.size() - 1 << endl;
                 cout << "Ideal pyramid sizes for hidden layers: ";
                 for (size_t i = 0; i < idealSizes.size(); i++)
                 {
@@ -111,7 +112,7 @@ public:
                 cout << endl;
 
                 cout << "Current hidden layer sizes: ";
-                for (size_t i = 0; i < weights.size(); i++)
+                for (size_t i = 0; i < weights.size() - 1; i++)
                 {
                     cout << weights[i].size();
                     if (i < weights.size() - 1)
@@ -119,41 +120,58 @@ public:
                 }
                 cout << endl;
             }
-
-            // Tüm hidden layer'lar için fazla nöronları sil
-            for (size_t i = 0; i < weights.size(); i++)
+            cout << "Debug1 " << weights.size() << endl;
+            // Tum hidden layer'lar icin fazla noronlari sil
+            bool changed = false;
+            for (size_t i = 1; i < weights.size(); i++)
             {
-                if (i >= idealSizes.size())
+                cout << "Debug2 " << idealSizes.size() << endl;
+                if (i > idealSizes.size())
                 {
                     if (debug)
-                        cout << "Skipping layer " << i << " - no ideal size defined" << endl;
+                        cout << "Skipping layer " << i << " - no ideal size defined " << idealSizes.size() << endl;
                     continue;
                 }
+                // cout << "Debug3 > " << weights[1][1].size() << " > " << idealSizes[0] << endl;
 
-                // Eğer mevcut boyut ideal boyuttan büyükse, fazlalığı sil
-                if (weights[i].size() > idealSizes[i])
+                // Eger mevcut boyut ideal boyuttan buyukse, fazlaligi sil
+                cout << "Debug 2.1 " << weights[i - 1].size() << endl;
+                cout << "Debug 2.2 " << idealSizes[i - 1] << endl;
+                cout << "Debug 2.3 " << i << endl;
+                if (weights[i - 1].size() > idealSizes[i - 1])
                 {
-                    int excess = weights[i].size() - idealSizes[i];
+                    cout << "Debug4" << endl;
+
+                    int excess = weights[i - 1].size() - idealSizes[i - 1];
+                    cout << "Debug4.1" << endl;
 
                     if (debug)
                     {
                         cout << "Layer " << i << " has " << excess << " excess neurons (ideal: "
-                             << idealSizes[i] << ", current: " << weights[i].size() << ")" << endl;
+                             << idealSizes[i - 1] << ", current: " << weights[i - 1].size() << ")" << endl;
                     }
 
-                    // En pasif nöronları sil (maksimum 10 nöron)
-                    removeMostInactiveNeurons(i, min(excess, 10));
+                    // En pasif noronlari sil (maksimum 10 noron)
+                    changed = removeMostInactiveNeurons(i, min(excess, 10));
                 }
+                else
+                {
+                    cout << "Debug4.2" << endl;
+                }
+                cout << "Debug5" << endl;
             }
+            cout << "Debug6" << endl;
+            return changed;
         }
 
-        // YENİ: Belirli bir katmandan en pasif nöronları sil
-        void removeMostInactiveNeurons(size_t layerIndex, int numToRemove)
+        // YENI: Belirli bir katmandan en pasif noronlari sil
+        bool removeMostInactiveNeurons(size_t layerIndex, int numToRemove)
         {
+            bool changed = false;
             if (layerIndex >= weights.size() || numToRemove <= 0)
-                return;
+                return changed;
 
-            // Nöron aktivitelerini hesapla ve sırala
+            // Noron aktivitelerini hesapla ve sirala
             vector<pair<double, size_t>> neuronActivities;
             for (size_t n = 0; n < weights[layerIndex].size(); n++)
             {
@@ -161,10 +179,10 @@ public:
                 neuronActivities.push_back({activity, n});
             }
 
-            // Aktiviteye göre sırala (en pasifler başta)
+            // Aktiviteye gore sirala (en pasifler basta)
             sort(neuronActivities.begin(), neuronActivities.end());
 
-            // En pasif nöronları sil (ters sırada sil ki indeksler kaymasın)
+            // En pasif noronlari sil (ters sirada sil ki indeksler kaymasin)
             for (int i = numToRemove - 1; i >= 0; i--)
             {
                 if (i < neuronActivities.size())
@@ -175,12 +193,13 @@ public:
                         cout << "Removing neuron " << neuronIndex << " from layer " << layerIndex
                              << " (activity: " << neuronActivities[i].first << ")" << endl;
                     }
-                    removeNeuronAt(layerIndex, neuronIndex, false);
+                    changed = removeNeuronAt(layerIndex, neuronIndex, false);
                 }
             }
+            return changed;
         }
 
-        int monitorNetwork()
+        int monitorNetwork(double targetError = 0.2)
         {
             /*
             0 : continue
@@ -192,14 +211,14 @@ public:
 
             double slope = computeErrorSlope(150);
 
-            // Eğer eğim çok küçük ama hata hala yüksek → kapasite yetmiyor olabilir
+            // Eger egim cok kucuk ama hata hala yuksek → kapasite yetmiyor olabilir
             double lastError = errors.empty() ? 9999 : errors.back();
 
             if (slope != 0.0 && (slope > -0.001 && slope < 0.001))
             {
                 if (lrChanged <= 3)
                 {
-                    learningRate += 0.5;
+                    learningRate += 0.3;
 
                     if (debug)
                     {
@@ -212,23 +231,28 @@ public:
                 }
                 else if (lrChanged > 3)
                 {
-                    if (lastError > 0.24) // Hata hala yüksek → kapasiteyi arttır
+                    if (lastError > targetError * 2) // Hata hala yuksek → kapasiteyi arttir
                     {
-                        cout << "debug" << endl;
-                        removeExcessNeuronsFromPyramid();
-
-                        // Önce katman dengesizliğini kontrol et ve düzelt
-                        if (checkLayerImbalance() && fixLayerImbalance())
+                        // SADECE gercekten pasif noronlari kaldir (rastgele katmanlardan DEGIL)
+                        if(fixLayerImbalance()){
+                            return 4;
+                        }
+                        
+                        if (removeExcessNeuronsFromPyramid() || removeOnlyTrulyInactiveNeurons())
                         {
-                            cout << "Katmanlar düzeltildi " << endl;
-                            return 4; // Katman dengesizliği düzeltildi
+                            return 4;
                         }
 
-                        // Piramit yapısını koruyarak en uygun katmana nöron ekle
-                        size_t targetLayer = findOptimalLayerForAddition();
-                        addNeuronToLayer(targetLayer);
+                        //// Piramit yapisini koruyarak en uygun katmana noron ekle
+                        // size_t targetLayer = findOptimalLayerForAddition();
+                        // log_saver("Optimize edilebilecek katman :" + targetLayer);
+                        // if (addNeuronToLayer(targetLayer))
+                        //{
+                        //     cout << "Neuron added" << endl;
+                        //     return 4;
+                        // }
 
-                        return 4;
+                        return 2;
                     }
                     else
                     {
@@ -238,8 +262,6 @@ public:
                         return 2;
                     }
                 }
-
-
             }
             else if (slope != 0 && (slope > 0))
             {
@@ -255,32 +277,32 @@ public:
             return 0;
         }
 
-        // YENİ: Piramit yapısı için optimal katmanı bul
-        // DÜZELTİLMİŞ: Piramit yapısı için optimal katmanı bul (giriş/çıkış katmanlarına dokunmaz)
+        // YENI: Piramit yapisi icin optimal katmani bul
+        // DUZELTILMIS: Piramit yapisi icin optimal katmani bul (giris/cikis katmanlarina dokunmaz)
         size_t findOptimalLayerForAddition()
         {
-            // Sadece hidden layer'ları düşün (giriş ve çıkış katmanlarını atla)
+            // Sadece hidden layer'lari dusun (giris ve cikis katmanlarini atla)
             if (weights.size() <= 2)
             {
-                // Sadece 1 hidden layer varsa onu döndür
-                return 1; // Hidden layer index 1'de (0: giriş, 1: hidden, 2: çıkış)
+                // Sadece 1 hidden layer varsa onu dondur
+                return 1; // Hidden layer index 1'de (0: giris, 1: hidden, 2: cikis)
             }
 
-            // Giriş ve çıkış boyutlarını al
+            // Giris ve cikis boyutlarini al
             size_t inputSize = weights[0][0].size();
             size_t outputSize = weights.back().size();
 
-            // İdeal piramit yapısını hesapla (sadece hidden layer'lar için)
-            vector<size_t> idealSizes = calculatePyramidStructure(inputSize, outputSize, weights.size() - 2);
+            // Ideal piramit yapisini hesapla (sadece hidden layer'lar icin)
+            vector<size_t> idealSizes = calculatePyramidStructure(inputSize, outputSize, weights.size() - 1);
 
-            // Mevcut boyutlarla ideal boyutları karşılaştır, en çok eksiği olan HIDDEN katmanı bul
-            size_t optimalLayer = 1; // Varsayılan olarak ilk hidden layer
+            // Mevcut boyutlarla ideal boyutlari karsilastir, en cok eksigi olan HIDDEN katmani bul
+            size_t optimalLayer = 1; // Varsayilan olarak ilk hidden layer
             double maxDeficit = 0.0;
 
-            // Sadece hidden layer'ları kontrol et (index 1'den weights.size()-2'ye kadar)
+            // Sadece hidden layer'lari kontrol et (index 1'den weights.size()-2'ye kadar)
             for (size_t i = 1; i < weights.size() - 1; i++)
             {
-                // idealSizes indeksini ayarla (hidden layer'lar 0'dan başlar)
+                // idealSizes indeksini ayarla (hidden layer'lar 0'dan baslar)
                 size_t idealIndex = i - 1;
                 if (idealIndex >= idealSizes.size())
                     break;
@@ -293,7 +315,7 @@ public:
                 }
             }
 
-            // Eğer hiç eksiği olan hidden layer yoksa, en küçük hidden layer'ı bul
+            // Eger hic eksigi olan hidden layer yoksa, en kucuk hidden layer'i bul
             if (maxDeficit <= 0)
             {
                 return findSmallestHiddenLayer();
@@ -302,18 +324,18 @@ public:
             return optimalLayer;
         }
 
-        // YENİ: En küçük HIDDEN katmanı bul (giriş/çıkış katmanlarını atlar)
+        // YENI: En kucuk HIDDEN katmani bul (giris/cikis katmanlarini atlar)
         size_t findSmallestHiddenLayer()
         {
             if (weights.size() <= 2)
             {
-                return 1; // Varsayılan hidden layer index
+                return 1; // Varsayilan hidden layer index
             }
 
             size_t smallestLayer = 1;
             size_t minSize = weights[1].size();
 
-            // Sadece hidden layer'ları kontrol et (index 1'den weights.size()-2'ye kadar)
+            // Sadece hidden layer'lari kontrol et (index 1'den weights.size()-2'ye kadar)
             for (size_t i = 1; i < weights.size() - 1; i++)
             {
                 if (weights[i].size() < minSize)
@@ -325,18 +347,20 @@ public:
             return smallestLayer;
         }
 
-        // DÜZELTİLMİŞ: Piramit yapısını hesapla (sadece hidden layer'lar için)
+        // DUZELTILMIS: Piramit yapisini hesapla (sadece hidden layer'lar icin)
         vector<size_t> calculatePyramidStructure(size_t inputSize, size_t outputSize, size_t numHiddenLayers)
         {
             vector<size_t> pyramidSizes;
 
             if (numHiddenLayers == 0)
+            {
+                cout << "Debug8" << endl;
                 return pyramidSizes;
-
+            }
             if (numHiddenLayers == 1)
             {
                 // 4,3,2 → hidden: 3
-                size_t middle = max((inputSize + outputSize) / 2, (size_t)2); // En az 2 nöron
+                size_t middle = max((inputSize + outputSize) / 2, (size_t)2); // En az 2 noron
                 pyramidSizes.push_back(middle);
             }
             else if (numHiddenLayers == 2)
@@ -359,7 +383,7 @@ public:
                     {
                         size *= 1.3; // 1.5 → 1.3
                     }
-                    pyramidSizes.push_back(max(static_cast<size_t>(size), (size_t)2)); // En az 2 nöron
+                    pyramidSizes.push_back(max(static_cast<size_t>(size), (size_t)2)); // En az 2 noron
                 }
             }
 
@@ -377,13 +401,13 @@ public:
 
             return pyramidSizes;
         }
-        // YENİ: Sadece gerçekten pasif nöronları kaldır
-        void removeOnlyTrulyInactiveNeurons(double threshold = 2)
+        // YENI: Sadece gercekten pasif noronlari kaldir
+        bool removeOnlyTrulyInactiveNeurons(double threshold = 0.3)
         {
-            // Tüm katmanlarda dolaş ve gerçekten pasif olan nöronları kaldır
-            for (size_t layerIndex = 0; layerIndex < weights.size(); layerIndex++)
+            // Tum katmanlarda dolas ve gercekten pasif olan noronlari kaldir
+            for (size_t layerIndex = 1; layerIndex < weights.size(); layerIndex++)
             {
-                // Ters sırayla gitmek daha güvenli
+                // Ters sirayla gitmek daha guvenli
                 for (int n = weights[layerIndex].size() - 1; n >= 0; n--)
                 {
                     double neuronActivity = calculateNeuronActivity(layerIndex, n);
@@ -395,14 +419,17 @@ public:
                             cout << "Removing truly inactive neuron " << n << " from layer " << layerIndex
                                  << " (activity: " << neuronActivity << ")" << endl;
                         }
-                        removeNeuronAt(layerIndex, n, false);
+                        return removeNeuronAt(layerIndex, n, false);
+
+                        printModelASCII("", true);
                     }
                 }
             }
+            return false;
         }
 
-        // YENİ: Nöron aktivitesini hesapla (daha karmaşık metrik)
-        // Nöron aktivite hesaplamasını iyileştir
+        // YENI: Noron aktivitesini hesapla (daha karmasik metrik)
+        // Noron aktivite hesaplamasini iyilestir
         double calculateNeuronActivity(size_t layerIndex, size_t neuronIndex)
         {
             if (layerIndex >= weights.size() || neuronIndex >= weights[layerIndex].size())
@@ -410,7 +437,7 @@ public:
                 return 1.0;
             }
 
-            // 1. Ağırlık varyasyonunu hesapla (standart sapma benzeri)
+            // 1. Agirlik varyasyonunu hesapla (standart sapma benzeri)
             double sum = 0.0;
             double sumSq = 0.0;
             for (double w : weights[layerIndex][neuronIndex])
@@ -421,10 +448,10 @@ public:
             double mean = sum / weights[layerIndex][neuronIndex].size();
             double variance = (sumSq / weights[layerIndex][neuronIndex].size()) - (mean * mean);
 
-            // 2. Bias'ın etkisi
+            // 2. Bias'in etkisi
             double biasEffect = fabs(biases[layerIndex][neuronIndex]);
 
-            // 3. Aktivasyon = varyasyon * bias (nöronun "ilginçliği")
+            // 3. Aktivasyon = varyasyon * bias (noronun "ilgincligi")
             return sqrt(fabs(variance)) * (1.0 + biasEffect);
         }
 
@@ -432,158 +459,204 @@ public:
         {
             if (!checkLayerImbalance())
             {
-                cout << "WTFFF" << endl;
+                if (debug)
+                    cout << "[DEBUG] fixLayerImbalance: No imbalance detected -> returning false" << endl;
                 return false;
             }
+
             vector<size_t> idealSizes = calculatePyramidStructure(
                 weights[0][0].size(),
                 weights.back().size(),
-                weights.size() - 2); // ← Sadece hidden layer'lar
+                weights.size() - 1); // sadece hidden layer'lar
+
+            if (debug)
+            {
+                cout << "[DEBUG] fixLayerImbalance: Input=" << weights[0][0].size()
+                     << " Output=" << weights.back().size()
+                     << " HiddenCount=" << (weights.size() - 1) << endl;
+
+                cout << "[DEBUG] idealSizes = [ ";
+                for (auto v : idealSizes)
+                    cout << v << " ";
+                cout << "]" << endl;
+            }
 
             bool changed = false;
 
-            // Sadece hidden layer'ları düzelt (index 1'den weights.size()-2'ye kadar)
-            for (size_t i = 1; i < weights.size() - 1; i++)
+            // Hidden katmanları düzelt
+            for (size_t i = 1; i <= weights.size() - 1; i++)
             {
                 size_t idealIndex = i - 1;
                 if (idealIndex >= idealSizes.size())
+                {
+                    if (debug)
+                        cout << "[DEBUG] BREAK: idealIndex=" << idealIndex
+                             << " >= idealSizes.size()=" << idealSizes.size() << endl;
                     break;
+                }
 
-                int deficit = idealSizes[idealIndex] - weights[i].size();
+                int deficit = static_cast<int>(idealSizes[idealIndex]) -
+                              static_cast<int>(weights[i - 1].size());
+
+                if (debug)
+                {
+                    cout << "[DEBUG] Layer " << i
+                         << " -> ideal=" << idealSizes[idealIndex]
+                         << " actual=" << weights[i].size()
+                         << " deficit=" << deficit << endl;
+                }
 
                 if (deficit > 0)
                 {
-                    for (int j = 0; j < min(deficit, 3); j++)
-                    { // Maksimum 3 nöron
-                        addNeuronToLayer(i);
-                        changed = true;
+                    int toAdd = min(deficit, 3);
+                    if (debug)
+                        cout << "[DEBUG] Adding " << toAdd
+                             << " neuron(s) to hidden layer " << i << endl;
+
+                    for (int j = 0; j < toAdd; j++)
+                    {
+                        bool result = addNeuronToLayer(i);
+                        changed = changed || result;
+
+                        if (debug)
+                        {
+                            cout << "   [DEBUG] addNeuronToLayer("
+                                 << i << ") -> " << (result ? "success" : "failed")
+                                 << " | newSize=" << weights[i].size() << endl;
+                        }
                     }
                 }
+                else if (deficit < 0)
+                {
+                    if (debug)
+                        cout << "[DEBUG] Layer " << i
+                             << " has surplus neurons (" << -deficit << ")" << endl;
+                    // Burada removeNeuronFromLayer eklenebilir
+                }
             }
+
+            if (debug)
+                cout << "[DEBUG] fixLayerImbalance finished -> changed=" << (changed ? "true" : "false") << endl;
 
             return changed;
         }
 
-        // DEĞİŞTİRİLDİ: Katman dengesizliği kontrolü (piramit yapıya göre)
         bool checkLayerImbalance(double threshold = 1.5)
         {
             if (weights.size() < 2)
             {
-                log_saver("Something went wrong");
+                log_saver("Something went wrong: weights.size() < 2");
                 return false;
             }
 
+            // Input size, output size ve hidden count → ideal yapıyı hesapla
             vector<size_t> idealSizes = calculatePyramidStructure(
                 weights[0][0].size(),
                 weights.back().size(),
-                weights.size());
+                weights.size() - 1);
 
-            for (size_t i = 0; i < weights.size(); i++)
+            if (debug)
             {
-                double ratio = static_cast<double>(idealSizes[i]) /
-                               static_cast<double>(max(1, (int)weights[i].size()));
+                cout << "[DEBUG] Input size = " << weights[0][0].size()
+                     << " Output size = " << weights.back().size()
+                     << " Hidden count = " << (weights.size() - 1) << endl;
 
-                if (ratio > threshold || ratio < 1.0 / threshold)
+                cout << "[DEBUG] idealSizes = [ ";
+                for (auto v : idealSizes)
+                    cout << v << " ";
+                cout << "] (len=" << idealSizes.size() << ")" << endl;
+            }
+
+            for (size_t i = 1; i <= weights.size() - 1; i++) // sadece hidden
+            {
+                size_t idealIndex = i - 1; // hidden index → idealSizes index
+                cout << "nice  i:" << i << endl;
+                if (idealIndex >= idealSizes.size())
                 {
+                    if (debug)
+                        cout << "[DEBUG] BREAK: idealIndex=" << idealIndex
+                             << " >= idealSizes.size()=" << idealSizes.size() << endl;
+                    break;
+                }
+
+                size_t actualSize = weights[i - 1].size();
+                size_t idealSize = idealSizes[idealIndex];
+
+                double ratio = static_cast<double>(idealSize) /
+                               static_cast<double>(max(1, (int)actualSize));
+
+                if (debug)
+                {
+                    cout << "[DEBUG] Layer " << i
+                         << " -> ideal=" << idealSize
+                         << " actual=" << actualSize
+                         << " ratio=" << ratio
+                         << " threshold=" << threshold << endl;
+                }
+
+                if (ratio >= threshold || ratio < 1.0 / threshold)
+                {
+                    if (debug)
+                        cout << "[DEBUG] ❌ Imbalance detected at hidden layer " << i << endl;
                     return true;
                 }
             }
 
+            if (debug)
+                cout << "[DEBUG] ✅ All hidden layers within balance" << endl;
+
             return false;
         }
 
-        void addNeuronToLayer(size_t layerIndex)
+        bool addNeuronToLayer(size_t layerIndex)
         {
-            // GİRİŞ ve ÇIKIŞ katmanlarına eklemeyi ENGELLE
-            if (layerIndex >= weights.size() || layerIndex == 0 || layerIndex == weights.size() - 1)
-            {
-                log_saver("ERROR: Cannot add neurons to input or output layers!");
-                return;
-            }
+            if (debug)
+                cout << "Debug adding 0 layerIndex:" << layerIndex << endl;
+
+            // layerIndex: 0 = ilk hidden katman, 1 = ikinci hidden katman, vs.
+            // weights.size()-1 = çıkış katmanı indeksi
+
             if (layerIndex >= weights.size())
             {
-                log_saver("Something went wrong");
-                return;
-            }
-            // Eğer layer boşsa 1 nöron ekle ve weights ve bias'ı başlat
-            if (weights[layerIndex].empty())
-            {
-                size_t inputSize = (layerIndex == 0) ? layerInputs.size() : weights[layerIndex - 1].size();
-                vector<double> newNeuronWeights(inputSize);
-                for (size_t i = 0; i < inputSize; i++)
-                    newNeuronWeights[i] = ((rand() % 100) / 100.0 - 0.5);
-
-                weights[layerIndex].push_back(newNeuronWeights);
-                biases[layerIndex].push_back(((rand() % 100) / 100.0 - 0.5));
-            }
-            else
-            {
-                size_t inputSize = weights[layerIndex][0].size();
-                vector<double> newNeuronWeights(inputSize);
-                for (size_t i = 0; i < inputSize; i++)
-                    newNeuronWeights[i] = ((rand() % 100) / 100.0 - 0.5);
-
-                weights[layerIndex].push_back(newNeuronWeights);
-                biases[layerIndex].push_back(((rand() % 100) / 100.0 - 0.5));
+                if (debug)
+                    cout << "ERROR: Layer index " << layerIndex
+                         << " corresponds to output layer or is invalid!" << endl;
+                return false;
             }
 
-            // Sonraki layer varsa ve nöron sayısı > 0 ise bağlantıları güncelle
-            if (layerIndex + 1 < weights.size() && !weights[layerIndex + 1].empty()) // ADDED: Check if next layer is not empty
-            {
-                for (size_t n = 0; n < weights[layerIndex + 1].size(); n++)
-                {
-                    weights[layerIndex + 1][n].push_back(((rand() % 100) / 100.0 - 0.5));
-                }
-            }
-            // Eğer bir sonraki layer tamamen boşsa, onu da initialize et
-            else if (layerIndex + 1 < weights.size() && weights[layerIndex + 1].empty())
-            {
-                // Initialize the next layer with at least one neuron
-                size_t inputSize = weights[layerIndex].size(); // Input size is now the number of neurons we just added to
-                vector<double> newNeuronWeights(inputSize);
-                for (size_t i = 0; i < inputSize; i++)
-                    newNeuronWeights[i] = ((rand() % 100) / 100.0 - 0.5);
+            if (debug)
+                cout << "Adding neuron to HIDDEN layer " << layerIndex << endl;
 
-                weights[layerIndex + 1].push_back(newNeuronWeights);
-                biases[layerIndex + 1].push_back(((rand() % 100) / 100.0 - 0.5));
+            // Yeni nöron ağırlıkları (önceki katmandan gelen bağlantılar)
+            size_t inputSize = weights[layerIndex - 1][0].size();
+            vector<double> newNeuronWeights(inputSize);
+            for (size_t i = 0; i < inputSize; i++)
+                newNeuronWeights[i] = ((rand() % 100) / 100.0 - 0.5);
+
+            // Hidden katmana nöron ekle
+            weights[layerIndex - 1].push_back(newNeuronWeights);
+            biases[layerIndex - 1].push_back(((rand() % 100) / 100.0 - 0.5));
+
+            // Sonraki katmana (hidden→hidden veya hidden→output) yeni bağlantılar ekle
+            for (size_t n = 0; n < weights[layerIndex].size(); n++)
+            {
+                weights[layerIndex][n].push_back(((rand() % 100) / 100.0 - 0.5));
             }
-            // Clear cached values since network structure changed
+
+            // Cache temizle
             layerInputs.clear();
             layerOutputs.clear();
 
-            log_saver("Neuron added to layer " + to_string(layerIndex));
+            cout << "Neuron added to hidden layer " << layerIndex << endl;
+            log_saver("Neuron added to hidden layer :" + to_string(layerIndex));
+            return true;
         }
+
         // -----------------------------
         // Islevsiz Noron Kontrol ve Kaldir
         // -----------------------------
-        void removeInactiveNeurons(size_t layerIndex, double threshold = 0.05, bool preserveWeights = false)
-        {
-            if (layerIndex >= weights.size())
-            {
-                log_saver("Something went wrong");
-                return;
-            }
-            // Ters sirayla gitmek daha guvenli
-            for (int n = weights[layerIndex].size() - 1; n >= 0; n--)
-            {
-                double sumAbsWeights = 0.0;
-                for (double w : weights[layerIndex][n])
-                    sumAbsWeights += fabs(w);
 
-                double avgWeight = sumAbsWeights / weights[layerIndex][n].size();
-
-                if (avgWeight < threshold)
-                {
-                    if (debug)
-                        cout << "Removing inactive neuron " << n << " from layer " << layerIndex
-                             << " (avg weight: " << avgWeight << ")" << endl;
-
-                    removeNeuronAt(layerIndex, n, preserveWeights);
-                }
-            }
-        }
-
-        void printModelASCII(const string &name = "")
+        void printModelASCII(const string &name = "", bool onlyModel = false)
         {
             cout << "=========================\n";
             cout << "Model: " << name << " | Activation: " << activationType << "\n";
@@ -631,85 +704,71 @@ public:
             }
 
             // Katmanlari yazdir
-            for (size_t l = 0; l < weights.size(); l++)
+            if (onlyModel == false)
             {
-                cout << "Layer " << l << " -> Layer " << (l + 1) << " connections:\n";
-                for (size_t n = 0; n < weights[l].size(); n++)
+
+                for (size_t l = 0; l < weights.size(); l++)
                 {
-                    cout << "   Neuron " << n << " connections: " << endl;
-                    for (size_t k = 0; k < weights[l][n].size(); k++)
+                    cout << "Layer " << l << " -> Layer " << (l + 1) << " connections:\n";
+                    for (size_t n = 0; n < weights[l].size(); n++)
                     {
-                        cout << "      " << n << "->" << k << ":" << weights[l][n][k] << " " << endl;
-                        ;
+                        cout << "   Neuron " << n << " connections: " << endl;
+                        for (size_t k = 0; k < weights[l][n].size(); k++)
+                        {
+                            cout << "      " << n << "->" << k << ":" << weights[l][n][k] << " " << endl;
+                            ;
+                        }
+                        cout << "     | bias: " << biases[l][n] << "\n";
                     }
-                    cout << "     | bias: " << biases[l][n] << "\n";
                 }
             }
             cout << "=========================\n";
         }
 
         // -----------------------------
-        // Noron Sil
-        // -----------------------------
-
-        void removeNeuron(size_t layerIndex, bool preserveWeights = false)
-        {
-            if (layerIndex >= weights.size() || weights[layerIndex].empty())
-            {
-                cout << "Sething is not right" << endl;
-                log_saver("Something is not right");
-                return;
-            }
-
-            // Son noronu cikariyoruz
-            size_t neuronIndex = weights[layerIndex].size() - 1;
-            weights[layerIndex].erase(weights[layerIndex].begin() + neuronIndex);
-            biases[layerIndex].erase(biases[layerIndex].begin() + neuronIndex);
-
-            if (!preserveWeights && layerIndex + 1 < weights.size())
-            {
-                // Sonraki layerdaki bu norona ait agirliklari da sil
-                for (size_t n = 0; n < weights[layerIndex + 1].size(); n++)
-                {
-                    if (weights[layerIndex + 1][n].size() > neuronIndex)
-                        weights[layerIndex + 1][n].erase(weights[layerIndex + 1][n].begin() + neuronIndex);
-                }
-            }
-
-            // Clear cached values since network structure changed
-            layerInputs.clear();
-            layerOutputs.clear();
-
-            log_saver("Neuron removed from layer " + to_string(layerIndex));
-        }
-
-        // -----------------------------
         // Index ile Noron Sil
         // -----------------------------
-        void removeNeuronAt(size_t layerIndex, size_t neuronIndex, bool preserveWeights = false)
+        bool removeNeuronAt(size_t layerIndex, size_t neuronIndex, bool preserveWeights = false)
         {
-            if (layerIndex >= weights.size() || neuronIndex >= weights[layerIndex].size())
+            bool changed = false;
+            if (layerIndex == 0)
             {
-                log_saver("Something is not right again");
-                return;
+                cout << "Cant delete input neuron At" << endl;
+                return changed;
             }
-            weights[layerIndex].erase(weights[layerIndex].begin() + neuronIndex);
-            biases[layerIndex].erase(biases[layerIndex].begin() + neuronIndex);
-
-            if (!preserveWeights && layerIndex + 1 < weights.size())
+            if (layerIndex >= weights.size() + 1) // cikis katmani ve gecersiz index
             {
-                for (size_t n = 0; n < weights[layerIndex + 1].size(); n++)
+                cout << "Cant delete output neuron At" << endl;
+                return changed;
+            }
+
+            size_t weightLayer = layerIndex - 1; // weights giris-cikis kaymasi
+            if (neuronIndex >= weights[weightLayer].size())
+            {
+                log_saver("Something is not right again" + to_string(neuronIndex )+ " >= " + to_string(weights[weightLayer].size()));
+                return changed;
+            }
+
+            // Gizli katmandan noronu sil
+            weights[weightLayer].erase(weights[weightLayer].begin() + neuronIndex);
+            biases[weightLayer].erase(biases[weightLayer].begin() + neuronIndex);
+            // Sonraki layer'in agirliklarini guncelle
+            if (!preserveWeights && layerIndex < weights.size())
+            {
+                for (size_t n = 0; n < weights[layerIndex].size(); n++)
                 {
-                    if (weights[layerIndex + 1][n].size() > neuronIndex)
-                        weights[layerIndex + 1][n].erase(weights[layerIndex + 1][n].begin() + neuronIndex);
+                    if (weights[layerIndex][n].size() > neuronIndex)
+                        weights[layerIndex][n].erase(weights[layerIndex][n].begin() + neuronIndex);
                 }
             }
+            changed = true;
 
-            // Clear cached values since network structure changed
+            // Cache temizle
             layerInputs.clear();
             layerOutputs.clear();
 
-            log_saver("Spesificed Neuron removed from layer " + to_string(layerIndex) + ", index " + to_string(neuronIndex));
+            log_saver("Specified Neuron removed from layer " + to_string(layerIndex) + ", index " + to_string(neuronIndex));
+            return changed;
         }
 
         // Forward Pass
@@ -737,21 +796,121 @@ public:
             return activations;
         }
 
-        // Backpropagation
         double train(const vector<double> &inputs, const vector<double> &targets, double targetError)
         {
-            vector<double> output = forward(inputs);
+            // -----------------------------
+            // Model Kontrolu (Egitime baslamadan once)
+            // -----------------------------
+
+
+            if (weights.empty() || biases.empty())
+            {
+                if (debug)
+                    cout << "[ERROR] Hata: Model bos. weights veya biases yok!" << endl;
+                return -1;
+            }
+
+            if (weights.size() != biases.size())
+            {
+                if (debug)
+                    cout << "[ERROR] Hata: weights ve biases katman sayilari eslesmiyor!" << endl;
+                return -1;
+            }
+
+            if (inputs.empty())
+            {
+                if (debug)
+                    cout << "[ERROR] Hata: Girdi vektoru bos!" << endl;
+                return -1;
+            }
+
+            if (targets.empty())
+            {
+                if (debug)
+                    cout << "[ERROR] Hata: Hedef vektoru bos!" << endl;
+                return -1;
+            }
+            vector<double> output = forward(inputs); // <- layerOutputs burada dolacak
+
+            if (layerOutputs.size() != weights.size())
+            {
+                if (debug)
+                {
+                    cout << "[ERROR] Hata: layerOutputs boyutu weights ile eşleşmiyor!" << endl;
+                    cout << "  layerOutputs.size() = " << layerOutputs.size() << endl;
+                    cout << "  weights.size()      = " << weights.size() << endl;
+
+                    for (size_t i = 0; i < layerOutputs.size(); i++)
+                    {
+                        cout << "  layerOutputs[" << i << "].size() = " << layerOutputs[i].size() << endl;
+                    }
+                    for (size_t i = 0; i < weights.size(); i++)
+                    {
+                        cout << "  weights[" << i << "].size() = " << weights[i].size() << endl;
+                    }
+                }
+                return -1;
+            }
+
+            if (layerInputs.size() != weights.size())
+            {
+                if (debug)
+                    cout << "[ERROR] Hata: layerInputs boyutu weights ile eslesmiyor!" << endl;
+                return -1;
+            }
+
+            for (size_t l = 0; l < weights.size(); l++)
+            {
+                if (weights[l].size() != biases[l].size())
+                {
+                    if (debug)
+                        cout << "[ERROR] Hata: Layer " << l << " weights ve biases boyutlari eslesmiyor!" << endl;
+                    return -1;
+                }
+
+                for (size_t n = 0; n < weights[l].size(); n++)
+                {
+                    size_t expectedInputSize = (l == 0) ? inputs.size() : weights[l - 1].size();
+                    if (weights[l][n].size() != expectedInputSize)
+                    {
+                        if (debug)
+                        {
+                            cout << "[ERROR] Hata: Layer " << l << ", Neuron " << n
+                                 << " agirlik boyutu beklenen (" << expectedInputSize
+                                 << ") ile eslesmiyor! (" << weights[l][n].size() << ")" << endl;
+                        }
+                        return -1;
+                    }
+                }
+            }
+
+            if (targets.size() != weights.back().size())
+            {
+                if (debug)
+                    cout << "[ERROR] Hata: Hedef boyutu output katmani boyutu ile eslesmiyor! "
+                         << targets.size() << " vs " << weights.back().size() << endl;
+                return -1;
+            }
+
+
+
+            // -----------------------------
+            // Backpropagation
+            // -----------------------------
+
+
             vector<vector<double>> deltas(weights.size());
 
             // Output layer delta
             deltas.back().resize(output.size());
-            double errorSum = 0.0; // Toplam hata icin
+            double errorSum = 0.0;
             for (size_t i = 0; i < output.size(); i++)
             {
                 double error = output[i] - targets[i];
                 deltas.back()[i] = error * activateDerivative(layerInputs.back()[i]);
-                errorSum += error * error; // Kare hata ekle
+                errorSum += error * error;
             }
+
 
             // Hidden layers delta
             for (int l = weights.size() - 2; l >= 0; l--)
@@ -765,6 +924,7 @@ public:
                     deltas[l][i] = sum * activateDerivative(layerInputs[l][i]);
                 }
             }
+
 
             // Agirlik ve bias guncelle
             vector<double> layerInput;
@@ -781,7 +941,10 @@ public:
                 }
             }
 
-            double error = errorSum / output.size(); // Ortalama kare hata
+
+            double error = errorSum / output.size();
+
+
             return error;
         }
 
@@ -822,7 +985,7 @@ public:
 
     unordered_map<string, Network> models;
     string defaultNeuronActivationType = "sigmoid";
-    double learningRate = 2;
+    double learningRate = 1.3;
 
     void addModel(const string &key, const vector<int> &topology, const string &activation = "sigmoid")
     {
@@ -859,7 +1022,7 @@ public:
     }
 };
 
-void progress_bar(int current, int total = 50, int bar_length = 40)
+void progress_bar(int current, int total = 50, int bar_length = 40, double extra = 0)
 {
     int percent = current * 100 / total;
     int filled = bar_length * percent / 100;
@@ -869,7 +1032,7 @@ void progress_bar(int current, int total = 50, int bar_length = 40)
         cout << "#";
     for (int i = filled; i < bar_length; i++)
         cout << "-";
-    cout << "] " << percent << "% (" << current << "/" << total << ")";
+    cout << "] " << percent << "% (" << current << "/" << total << ") " << extra;
     cout.flush(); // Aninda yazdir
 }
 
@@ -1023,39 +1186,56 @@ void trainFromCSV(CorticalColumn &cc, const string &modelKey, const string &csvF
 
         while (readCSVLine(file, x, y, inputSize, outputSize))
         {
+
             totalError += cc.train(modelKey, x, y, targetError);
             count++;
         }
 
         avgError = totalError / max(1, count);
 
-        progress_bar(epoch, maxEpoch);
+        progress_bar(epoch, maxEpoch, 40, avgError);
 
-        // Model reboot mekanizması
-        if ((epoch + 1) % 20 == 0)
+        // Model reboot mekanizmasi
+        if ((epoch + 1) % 50 == 0)
         {
-            int monitor = cc.models[modelKey].monitorNetwork();
+            int monitor = cc.models[modelKey].monitorNetwork(targetError);
             if (monitor == 4) // neuron added - reboot needed
             {
-                // ÖNCE: Mevcut hatayı ve öğrenme oranını kaydet
+                // ONCE: Mevcut hatayi ve ogrenme oranini kaydet
                 double currentLR = cc.models[modelKey].learningRate;
                 vector<double> currentErrors = cc.models[modelKey].errors;
 
-                // Modeli tamamen yeniden oluştur
+                // Eski topology'yi sakla
+                vector<int> oldTopology;
+                oldTopology.push_back(cc.models[modelKey].weights[0][0].size()); // input size
+                for (const auto &layer : cc.models[modelKey].weights)
+                {
+                    oldTopology.push_back(layer.size());
+                }
+
+                // Eski modeli yazdir
+                cout << "Old model topology: ";
+                for (size_t i = 0; i < oldTopology.size(); i++)
+                {
+                    cout << oldTopology[i];
+                    if (i < oldTopology.size() - 1)
+                        cout << ",";
+                }
+                cout << endl;
+
+                // Simdi yeni topology'yi olustur
                 vector<int> currentTopology;
                 currentTopology.push_back(cc.models[modelKey].weights[0][0].size()); // input size
-
                 for (const auto &layer : cc.models[modelKey].weights)
                 {
                     currentTopology.push_back(layer.size());
                 }
 
-                // ESKİ modeli sil ve YENİSİNİ oluştur
                 cc.models.erase(modelKey);
                 cc.addModel(modelKey, currentTopology, "sigmoid");
 
-                // Öğrenme oranını ve hata geçmişini geri yükle
-                cc.models[modelKey].learningRate = currentLR;
+                // Ogrenme oranini ve hata gecmisini geri yukle
+                cc.models[modelKey].learningRate = currentLR / 2;
                 cc.models[modelKey].errors = currentErrors;
 
                 cout << "Model rebooted with new topology: ";
@@ -1066,14 +1246,23 @@ void trainFromCSV(CorticalColumn &cc, const string &modelKey, const string &csvF
                         cout << ",";
                 }
                 cout << endl;
+                if (debug)
+                {
+                    cout << "Model Rebooted" << endl;
+                }
+
                 log_saver("Model rebooted");
 
                 epoch = -1; // restart training (next iteration will be epoch 0)
-                continue;   // bu epoch'u atla
+                continue; // bu epoch'u atla
+            }
+            else if (monitor == 2)
+            {
+                cout << "Stopping" << endl;
             }
         }
 
-        // Hata hedefine ulaşıldı mı kontrol et
+        // Hata hedefine ulasildi mi kontrol et
         if ((isNewData && avgError < targetError) || (!isNewData && avgError < targetError))
         {
             log_saver("Stopped due to target error...");
@@ -1118,7 +1307,7 @@ void interactiveTraining(CorticalColumn &cc, const string &modelKey, const strin
         }
         else if (line == "print")
         {
-            cc.models[modelKey].printModelASCII();
+            cc.models[modelKey].printModelASCII(modelKey, true);
             continue;
         }
         if (line.empty())
@@ -1215,7 +1404,7 @@ void interactiveTraining(CorticalColumn &cc, const string &modelKey, const strin
             out.close();
         }
 
-        // Ana kodda kullanım:
+        // Ana kodda kullanim:
         if (line == "train")
         {
             trainFromCSV(cc, modelKey, csvFile, inputSize, outputSize, targetError, false);
@@ -1378,11 +1567,11 @@ int main()
     CorticalColumn cc;
 
     // Baslangic modelini olustur (4 giris, 2 cikis)
-    vector<int> layers = {4, 99, 2};
+    vector<int> layers = {4, 1, 2};
     cc.addModel("parity", layers, "sigmoid");
 
     // Etkilesimli mod baslat
-    interactiveTraining(cc, "parity", "data.csv", layers[0], layers.back(), 0.01);
+    interactiveTraining(cc, "parity", "data.csv", layers[0], layers.back(), 0.02);
 
     return 0;
 }
