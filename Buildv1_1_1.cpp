@@ -214,7 +214,7 @@ public:
             // Eger egim cok kucuk ama hata hala yuksek → kapasite yetmiyor olabilir
             double lastError = errors.empty() ? 9999 : errors.back();
 
-            if (slope != 0.0 && (slope > -0.001 && slope < 0.001))
+            if (slope != 0.0 && (abs(slope) < 0.001))
             {
                 if (lrChanged <= 3)
                 {
@@ -233,12 +233,56 @@ public:
                 {
                     if (lastError > targetError * 2) // Hata hala yuksek → kapasiteyi arttir
                     {
+
+                        // 1️⃣ Optimal katman sayısını hesapla (logImproved)
+                        int newHiddenCount = hiddenLayers_logImproved(weights[0][0].size(), weights.back().size(), "low");
+
+                        int currentHiddenCount = weights.size() - 1; // hidden layer sayısı
+                        if (newHiddenCount > currentHiddenCount)
+                        {
+                            // 2️⃣ Eksik katmanları ekle
+                            int layersToAdd = newHiddenCount - currentHiddenCount;
+                            for (int i = 0; i < layersToAdd; i++)
+                            {
+                                // Yeni hidden layer oluştur
+                                vector<vector<double>> newWeights;
+                                vector<double> newBiases;
+
+                                size_t prevLayerSize = (weights.empty()) ? 0 : weights.back().size();
+                                size_t nextLayerSize = (weights.empty()) ? 0 : weights.back().size();
+
+                                // Basit initialization: her neuron inputSize kadar rastgele ağırlık alır
+                                int neuronsInNewLayer = (prevLayerSize + nextLayerSize) / 2;
+                                if (neuronsInNewLayer < 2)
+                                    neuronsInNewLayer = 2;
+
+                                for (size_t n = 0; n < neuronsInNewLayer; n++)
+                                {
+                                    vector<double> neuronWeights(prevLayerSize);
+                                    for (size_t w = 0; w < prevLayerSize; w++)
+                                        neuronWeights[w] = ((rand() % 100) / 100.0 - 0.5);
+                                    newWeights.push_back(neuronWeights);
+                                    newBiases.push_back(((rand() % 100) / 100.0 - 0.5));
+                                }
+
+                                // Yeni layer'i ağırlık ve bias listesine ekle
+                                weights.insert(weights.end() - 1, newWeights); // çıkış layer önüne ekle
+                                biases.insert(biases.end() - 1, newBiases);
+                            }
+
+                            if (debug)
+                                cout << "[DEBUG] Added " << layersToAdd << " hidden layer(s) dynamically" << endl;
+
+                            return 4; // katman eklendi
+                        }
+
                         // SADECE gercekten pasif noronlari kaldir (rastgele katmanlardan DEGIL)
-                        if(fixLayerImbalance()){
+                        if (fixLayerImbalance())
+                        {
                             return 4;
                         }
-                        
-                        if (removeExcessNeuronsFromPyramid() || removeOnlyTrulyInactiveNeurons())
+
+                        if (removeExcessNeuronsFromPyramid() )//|| removeOnlyTrulyInactiveNeurons())
                         {
                             return 4;
                         }
@@ -275,6 +319,35 @@ public:
             }
 
             return 0;
+        }
+
+        // 2. Logaritmik yaklasim
+        int hiddenLayers_logImproved(int inputSize, int outputSize, const string &level = "medium")
+        {
+            double ratio = (double)inputSize / (double)outputSize;
+            double complexity = log2(ratio + 1) + log2(inputSize + outputSize);
+
+            // Temel katman sayısı
+            int layers = (int)round(complexity / 2.0);
+
+            // Seviye ayarı
+            double multiplier = 1.0;
+            if (level == "low")
+                multiplier = 0.6;
+            else if (level == "medium")
+                multiplier = 1.0;
+            else if (level == "high")
+                multiplier = 1.5;
+
+            layers = (int)round(layers * multiplier);
+
+            // 1–12 arası sınırla
+            if (layers < 1)
+                layers = 1;
+            if (layers > 13)
+                layers = 12;
+
+            return layers;
         }
 
         // YENI: Piramit yapisi icin optimal katmani bul
@@ -745,7 +818,7 @@ public:
             size_t weightLayer = layerIndex - 1; // weights giris-cikis kaymasi
             if (neuronIndex >= weights[weightLayer].size())
             {
-                log_saver("Something is not right again" + to_string(neuronIndex )+ " >= " + to_string(weights[weightLayer].size()));
+                log_saver("Something is not right again" + to_string(neuronIndex) + " >= " + to_string(weights[weightLayer].size()));
                 return changed;
             }
 
@@ -801,7 +874,6 @@ public:
             // -----------------------------
             // Model Kontrolu (Egitime baslamadan once)
             // -----------------------------
-
 
             if (weights.empty() || biases.empty())
             {
@@ -892,12 +964,9 @@ public:
                 return -1;
             }
 
-
-
             // -----------------------------
             // Backpropagation
             // -----------------------------
-
 
             vector<vector<double>> deltas(weights.size());
 
@@ -911,7 +980,6 @@ public:
                 errorSum += error * error;
             }
 
-
             // Hidden layers delta
             for (int l = weights.size() - 2; l >= 0; l--)
             {
@@ -924,7 +992,6 @@ public:
                     deltas[l][i] = sum * activateDerivative(layerInputs[l][i]);
                 }
             }
-
 
             // Agirlik ve bias guncelle
             vector<double> layerInput;
@@ -941,9 +1008,7 @@ public:
                 }
             }
 
-
             double error = errorSum / output.size();
-
 
             return error;
         }
@@ -1196,7 +1261,7 @@ void trainFromCSV(CorticalColumn &cc, const string &modelKey, const string &csvF
         progress_bar(epoch, maxEpoch, 40, avgError);
 
         // Model reboot mekanizmasi
-        if ((epoch + 1) % 50 == 0)
+        if ((epoch + 1) % 20 == 0)
         {
             int monitor = cc.models[modelKey].monitorNetwork(targetError);
             if (monitor == 4) // neuron added - reboot needed
@@ -1254,7 +1319,7 @@ void trainFromCSV(CorticalColumn &cc, const string &modelKey, const string &csvF
                 log_saver("Model rebooted");
 
                 epoch = -1; // restart training (next iteration will be epoch 0)
-                continue; // bu epoch'u atla
+                continue;   // bu epoch'u atla
             }
             else if (monitor == 2)
             {
@@ -1301,10 +1366,29 @@ void interactiveTraining(CorticalColumn &cc, const string &modelKey, const strin
             system("python3 Helpers/network_changes_logs.py");
             continue;
         }
-        else if (line == "train")
+        else if (line.rfind("train", 0) == 0) // "train" ile başlıyorsa
         {
-            line = "train";
+            string arg = line.substr(5); // "train" sonrası
+            if (!arg.empty())
+            {
+                try
+                {
+                    // Baştaki boşlukları temizle
+                    arg.erase(0, arg.find_first_not_of(" \t"));
+                    if (!arg.empty())
+                    {
+                        targetError = stod(arg);
+                        cout << "[INFO] targetError güncellendi: " << targetError << endl;
+                    }
+                }
+                catch (const exception &e)
+                {
+                    cout << "[ERROR] Geçersiz sayı formatı: " << arg << endl;
+                }
+            }
+            line = "train"; // komut olarak kullanılacak
         }
+
         else if (line == "print")
         {
             cc.models[modelKey].printModelASCII(modelKey, true);
@@ -1571,7 +1655,7 @@ int main()
     cc.addModel("parity", layers, "sigmoid");
 
     // Etkilesimli mod baslat
-    interactiveTraining(cc, "parity", "data.csv", layers[0], layers.back(), 0.02);
+    interactiveTraining(cc, "parity", "data.csv", layers[0], layers.back(), 0.05);
 
     return 0;
 }
