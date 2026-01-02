@@ -9,3 +9,5 @@ trainingDatas/
 
 Veriler/
 Helpers/.venv
+
+LLM/Embeddings/*.txt

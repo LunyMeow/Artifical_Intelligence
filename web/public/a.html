@@ -1,0 +1,453 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WASM Neural Network</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+
+        body {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+
+        .container {
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 20px;
+            padding: 40px;
+            width: 100%;
+            max-width: 600px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            backdrop-filter: blur(10px);
+        }
+
+        h1 {
+            color: #333;
+            text-align: center;
+            margin-bottom: 10px;
+            font-size: 2.5rem;
+            background: linear-gradient(45deg, #667eea, #764ba2);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .subtitle {
+            color: #666;
+            text-align: center;
+            margin-bottom: 30px;
+            font-size: 1.1rem;
+        }
+
+        .status-container {
+            background: #f8f9fa;
+            border-radius: 10px;
+            padding: 15px;
+            margin-bottom: 30px;
+            border-left: 4px solid #667eea;
+            transition: border-left-color 0.3s ease;
+        }
+
+        .status-label {
+            font-weight: 600;
+            color: #555;
+            margin-bottom: 5px;
+        }
+
+        #status {
+            color: #764ba2;
+            font-weight: 600;
+            font-size: 1.1rem;
+        }
+
+        .input-group {
+            margin-bottom: 25px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 8px;
+            color: #555;
+            font-weight: 600;
+        }
+
+        #input {
+            width: 100%;
+            padding: 15px;
+            border: 2px solid #e0e0e0;
+            border-radius: 10px;
+            font-size: 16px;
+            transition: all 0.3s ease;
+            outline: none;
+        }
+
+        #input:focus {
+            border-color: #764ba2;
+            box-shadow: 0 0 0 3px rgba(118, 75, 162, 0.1);
+        }
+
+        #input::placeholder {
+            color: #aaa;
+        }
+
+        .input-hint {
+            color: #888;
+            font-size: 0.9rem;
+            margin-top: 5px;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+
+        .input-hint::before {
+            content: "⏎";
+            font-weight: bold;
+        }
+
+        .button-container {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+
+        #btn {
+            background: linear-gradient(45deg, #667eea, #764ba2);
+            color: white;
+            border: none;
+            padding: 16px 40px;
+            border-radius: 10px;
+            font-size: 18px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
+        }
+
+        #btn:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(102, 126, 234, 0.6);
+        }
+
+        #btn:active:not(:disabled) {
+            transform: translateY(0);
+        }
+
+        #btn:disabled {
+            background: #cccccc;
+            cursor: not-allowed;
+            box-shadow: none;
+        }
+
+        .output-container {
+            background: #f0f2ff;
+            border-radius: 10px;
+            padding: 20px;
+            border: 2px dashed #d0d7ff;
+            min-height: 120px;
+        }
+
+        .output-label {
+            color: #555;
+            font-weight: 600;
+            margin-bottom: 10px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .output-label::before {
+            content: "🤖";
+        }
+
+        #output {
+            color: #333;
+            font-size: 16px;
+            line-height: 1.5;
+            word-wrap: break-word;
+            white-space: pre-wrap;
+            min-height: 24px;
+        }
+
+        .typing-cursor {
+            display: inline-block;
+            width: 3px;
+            height: 20px;
+            background-color: #764ba2;
+            margin-left: 2px;
+            animation: blink 0.7s infinite;
+            vertical-align: middle;
+        }
+
+        @keyframes blink {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0; }
+        }
+
+        .loading {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #764ba2;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-right: 10px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .footer {
+            text-align: center;
+            margin-top: 30px;
+            color: #888;
+            font-size: 0.9rem;
+        }
+
+        @media (max-width: 768px) {
+            .container {
+                padding: 25px;
+            }
+            
+            h1 {
+                font-size: 2rem;
+            }
+            
+            #btn {
+                padding: 14px 30px;
+                font-size: 16px;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <h1>🧠 Neural Network</h1>
+        <p class="subtitle">WebAssembly ile yapay sinir ağı inferansı</p>
+        
+        <div class="status-container">
+            <div class="status-label">Sistem Durumu:</div>
+            <div id="status">
+                <span class="loading"></span> Model yükleniyor...
+            </div>
+        </div>
+        
+        <div class="input-group">
+            <label for="input">Girdi:</label>
+            <input type="text" id="input" placeholder="Inferans için metin girin...">
+            <div class="input-hint">Enter tuşuna basarak gönderebilirsiniz</div>
+        </div>
+        
+        <div class="button-container">
+            <button id="btn" disabled>Inferans Çalıştır</button>
+        </div>
+        
+        <div class="output-container">
+            <div class="output-label">Sonuç:</div>
+            <div id="output">Burada inferans sonucu görünecek...</div>
+        </div>
+        
+        <div class="footer">
+            WebAssembly + C++ ile geliştirilmiştir
+        </div>
+    </div>
+
+    <script type="module">
+        import createModule from '/wasm/model.js';
+
+
+        let Module, loadModel, runInference;
+
+        async function init() {
+            try {
+                Module = await createModule({
+                    onAbort(reason) {
+                        console.error("WASM ABORT:", reason);
+                        updateStatus('Hata: Sistem durdu', 'error');
+                    },
+                    printErr(text) {
+                        console.error("WASM STDERR:", text);
+                    }
+                });
+
+                try {
+                    Module.FS.mkdir('/user_0000');
+                } catch (e) {
+                    // directory already exists → ignore
+                }
+
+                updateStatus('Model dosyaları indiriliyor...', 'loading');
+                
+                const binResp = await fetch('/model/command_model.bin');
+                if (!binResp.ok) throw new Error("BIN fetch failed");
+                const bin = await binResp.arrayBuffer();
+
+                Module.FS.writeFile(
+                    '/user_0000/command_model.bin',
+                    new Uint8Array(bin)
+                );
+
+                const metaResp = await fetch('/model/command_model.meta');
+
+                if (!metaResp.ok) throw new Error("META fetch failed");
+                const meta = await metaResp.text();
+
+                Module.FS.writeFile(
+                    '/user_0000/command_model.meta',
+                    meta
+                );
+
+                updateStatus('Model yükleniyor...', 'loading');
+
+                loadModel = Module.cwrap(
+                    'load_user_model',
+                    null,
+                    ['string', 'string']
+                );
+
+                runInference = Module.cwrap(
+                    'run_inference',
+                    'string',
+                    ['string']
+                );
+
+                loadModel(
+                    '/user_0000/command_model.bin',
+                    '/user_0000/command_model.meta'
+                );
+
+                updateStatus('✅ Sistem hazır', 'ready');
+                document.getElementById('btn').disabled = false;
+                document.getElementById('input').focus();
+
+            } catch (err) {
+                console.error("INIT FAILED:", err);
+                updateStatus('❌ Hata: ' + err.message, 'error');
+            }
+        }
+
+        function updateStatus(message, type) {
+            const statusEl = document.getElementById('status');
+            statusEl.innerHTML = message;
+            
+            const statusContainer = statusEl.closest('.status-container');
+            statusContainer.style.borderLeftColor = 
+                type === 'ready' ? '#4CAF50' : 
+                type === 'error' ? '#F44336' : 
+                '#667eea';
+        }
+
+        function typeWriter(text, element, speed = 30) {
+            return new Promise((resolve) => {
+                let i = 0;
+                element.innerHTML = '';
+                
+                const cursor = document.createElement('span');
+                cursor.className = 'typing-cursor';
+                element.appendChild(cursor);
+                
+                function type() {
+                    if (i < text.length) {
+                        // İmleci son karakterden önce taşı
+                        element.removeChild(cursor);
+                        element.innerHTML += text.charAt(i);
+                        element.appendChild(cursor);
+                        i++;
+                        setTimeout(type, speed);
+                    } else {
+                        // Yazma tamamlandığında imleci kaldır
+                        element.removeChild(cursor);
+                        resolve();
+                    }
+                }
+                
+                type();
+            });
+        }
+
+        async function runInferenceHandler() {
+            try {
+                const input = document.getElementById('input').value.trim();
+                const outputEl = document.getElementById('output');
+                const btn = document.getElementById('btn');
+                
+                if (!input) {
+                    outputEl.textContent = 'Lütfen geçerli bir girdi girin.';
+                    return;
+                }
+                
+                const originalText = btn.textContent;
+                btn.textContent = 'İşleniyor...';
+                btn.disabled = true;
+                
+                // İşlem sürüyor mesajını göster
+                outputEl.innerHTML = '<span class="loading" style="width: 16px; height: 16px;"></span> İşleniyor...';
+                
+                // Inferansı çalıştır
+                const result = runInference(input);
+                
+                // Sonucu harf harf yaz
+                await typeWriter(result, outputEl, 20);
+                
+                btn.textContent = originalText;
+                btn.disabled = false;
+                
+            } catch (e) {
+                console.error("INFERENCE ERROR:", e);
+                const outputEl = document.getElementById('output');
+                outputEl.innerHTML = '❌ Hata: Inferans çalıştırılamadı';
+                
+                const btn = document.getElementById('btn');
+                btn.textContent = 'Inferans Çalıştır';
+                btn.disabled = false;
+            }
+        }
+
+        // Enter tuşu ile gönderme
+        document.getElementById('input').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter' && !document.getElementById('btn').disabled) {
+                runInferenceHandler();
+            }
+        });
+
+        // Buton tıklaması
+        document.getElementById('btn').addEventListener('click', runInferenceHandler);
+
+        // Input alanına focus ekle
+        document.getElementById('input').addEventListener('focus', function() {
+            this.style.borderColor = '#764ba2';
+        });
+
+        document.getElementById('input').addEventListener('blur', function() {
+            this.style.borderColor = '#e0e0e0';
+        });
+
+        // Hata yakalama
+        window.addEventListener("unhandledrejection", e => {
+            console.error("UNHANDLED PROMISE:", e.reason);
+            updateStatus('❌ Beklenmeyen hata', 'error');
+        });
+
+        window.addEventListener("error", e => {
+            console.error("GLOBAL ERROR:", e.error || e.message);
+            updateStatus('❌ Sistem hatası', 'error');
+        });
+
+        // Sayfa yüklendiğinde başlat
+        init();
+    </script>
+</body>
+
+</html>

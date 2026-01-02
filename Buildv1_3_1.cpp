@@ -11,6 +11,7 @@
 
 #include <sstream>
 #include <algorithm>
+#include <set>
 
 using namespace std;
 
@@ -55,42 +56,328 @@ public:
         double learningRate = 0.5;
         int modelChangedSelf = 0;
 
-        // Sigmoid ve tanh aktivasyonlari
+        // ===============================
+        // Aktivasyon Fonksiyonları
+        // ===============================
         double activate(double x)
         {
             if (activationType == "tanh")
                 return tanh(x);
+
+            if (activationType == "relu")
+                return x > 0.0 ? x : 0.0;
+
+            if (activationType == "leaky_relu")
+                return x > 0.0 ? x : 0.01 * x;
+
+            if (activationType == "elu")
+                return x >= 0.0 ? x : 0.01 * (exp(x) - 1.0);
+
+            if (activationType == "softplus")
+                return log(1.0 + exp(x));
+
+            if (activationType == "linear")
+                return x;
+
+            // default: sigmoid
             return 1.0 / (1.0 + exp(-x));
         }
+
         double activateDerivative(double x)
         {
             if (activationType == "tanh")
-                return 1.0 - tanh(x) * tanh(x);
+            {
+                double t = tanh(x);
+                return 1.0 - t * t;
+            }
+
+            if (activationType == "relu")
+                return x > 0.0 ? 1.0 : 0.0;
+
+            if (activationType == "leaky_relu")
+                return x > 0.0 ? 1.0 : 0.01;
+
+            if (activationType == "elu")
+                return x >= 0.0 ? 1.0 : 0.01 * exp(x);
+
+            if (activationType == "softplus")
+                return 1.0 / (1.0 + exp(-x)); // sigmoid(x)
+
+            if (activationType == "linear")
+                return 1.0;
+
+            // default: sigmoid
             double s = 1.0 / (1.0 + exp(-x));
-            return s * (1 - s);
+            return s * (1.0 - s);
         }
 
+        // Network struct içine eklenecek fonksiyonlar:
 
+        // Belirli bir pozisyona hidden layer ekle
+        bool addLayerAt(size_t position, size_t neuronCount = 0)
+        {
+            // position: 1 = ilk hidden layer, 2 = ikinci hidden layer, vs.
+            // 0 veya weights.size() üzerinde olamaz (input/output katmanları korunur)
 
+            if (position == 0 || position > weights.size())
+            {
+                if (debug)
+                    cout << "ERROR: Cannot add layer at position " << position
+                         << " (input/output layers are protected)" << endl;
+                return false;
+            }
 
+            // Önceki ve sonraki katman boyutlarını al
+            size_t prevLayerSize = (position == 1) ? weights[0][0].size() : weights[position - 2].size();
+            size_t nextLayerSize = (position == weights.size()) ? weights.back().size() : weights[position - 1].size();
 
+            // Eğer nöron sayısı belirtilmemişse, ortalamasını al
+            if (neuronCount == 0)
+            {
+                neuronCount = (prevLayerSize + nextLayerSize) / 2;
+                if (neuronCount < 2)
+                    neuronCount = 2;
+            }
 
+            if (debug)
+            {
+                cout << "Adding layer at position " << position
+                     << " with " << neuronCount << " neurons" << endl;
+                cout << "Previous layer size: " << prevLayerSize
+                     << ", Next layer size: " << nextLayerSize << endl;
+            }
 
+            // Yeni katman için ağırlıklar ve bias'ları oluştur
+            vector<vector<double>> newWeights;
+            vector<double> newBiases;
 
+            // Yeni katmanın her nöronu için önceki katmandan gelen bağlantılar
+            for (size_t n = 0; n < neuronCount; n++)
+            {
+                vector<double> neuronWeights(prevLayerSize);
+                for (size_t w = 0; w < prevLayerSize; w++)
+                    neuronWeights[w] = ((rand() % 100) / 100.0 - 0.5);
 
+                newWeights.push_back(neuronWeights);
+                newBiases.push_back(((rand() % 100) / 100.0 - 0.5));
+            }
 
+            // Yeni katmanı ekle
+            weights.insert(weights.begin() + position - 1, newWeights);
+            biases.insert(biases.begin() + position - 1, newBiases);
 
-        
+            // Sonraki katmanın ağırlıklarını güncelle (yeni katmandan gelen bağlantılar)
+            if (position <= weights.size() - 1)
+            {
+                size_t nextLayerIndex = position; // weights array'inde sonraki katman
+                for (size_t n = 0; n < weights[nextLayerIndex].size(); n++)
+                {
+                    weights[nextLayerIndex][n].clear();
+                    for (size_t w = 0; w < neuronCount; w++)
+                        weights[nextLayerIndex][n].push_back(((rand() % 100) / 100.0 - 0.5));
+                }
+            }
 
+            // Cache temizle
+            layerInputs.clear();
+            layerOutputs.clear();
 
+            if (debug)
+                cout << "Layer successfully added at position " << position << endl;
 
+            log_saver("Layer added at position " + to_string(position) +
+                      " with " + to_string(neuronCount) + " neurons");
 
+            return true;
+        }
 
+        // En son hidden layer'a yeni katman ekle
+        bool addLayer(size_t neuronCount = 0)
+        {
+            // Çıkış katmanından önce ekle
+            return addLayerAt(weights.size(), neuronCount);
+        }
 
+        // Belirli pozisyondaki hidden layer'ı sil
+        bool removeLayerAt(size_t position)
+        {
+            // position: 1 = ilk hidden layer, 2 = ikinci hidden layer, vs.
+            // En az 1 hidden layer kalmalı
 
+            if (position == 0 || position > weights.size() - 1)
+            {
+                if (debug)
+                    cout << "ERROR: Invalid layer position " << position << endl;
+                return false;
+            }
 
+            if (weights.size() <= 2)
+            {
+                if (debug)
+                    cout << "ERROR: Cannot remove layer - minimum 1 hidden layer required" << endl;
+                return false;
+            }
 
+            if (debug)
+            {
+                cout << "Removing layer at position " << position << endl;
+                cout << "Layer size: " << weights[position - 1].size() << " neurons" << endl;
+            }
 
+            // Katmanı sil
+            weights.erase(weights.begin() + position - 1);
+            biases.erase(biases.begin() + position - 1);
+
+            // Sonraki katmanın ağırlıklarını güncelle
+            if (position < weights.size() + 1) // Silinen katmandan sonra bir katman varsa
+            {
+                size_t prevLayerSize = (position == 1) ? weights[0][0].size() : weights[position - 2].size();
+                size_t nextLayerIndex = position - 1;
+
+                // Sonraki katmanın her nöronunun ağırlıklarını yeniden boyutlandır
+                for (size_t n = 0; n < weights[nextLayerIndex].size(); n++)
+                {
+                    weights[nextLayerIndex][n].clear();
+                    for (size_t w = 0; w < prevLayerSize; w++)
+                        weights[nextLayerIndex][n].push_back(((rand() % 100) / 100.0 - 0.5));
+                }
+            }
+
+            // Cache temizle
+            layerInputs.clear();
+            layerOutputs.clear();
+
+            if (debug)
+                cout << "Layer successfully removed from position " << position << endl;
+
+            log_saver("Layer removed from position " + to_string(position));
+
+            return true;
+        }
+
+        // En pasif (en az etkili) hidden layer'ı bul ve sil
+        bool removeMostInactiveLayer()
+        {
+            if (weights.size() <= 2)
+            {
+                if (debug)
+                    cout << "Cannot remove layer - minimum 1 hidden layer required" << endl;
+                return false;
+            }
+
+            // Her hidden layer'ın toplam aktivitesini hesapla
+            vector<pair<double, size_t>> layerActivities;
+
+            for (size_t l = 1; l < weights.size(); l++) // Hidden layer'ları kontrol et
+            {
+                double totalActivity = 0.0;
+
+                // Katmandaki tüm nöronların aktivitelerini topla
+                for (size_t n = 0; n < weights[l - 1].size(); n++)
+                {
+                    totalActivity += calculateNeuronActivity(l, n);
+                }
+
+                // Ortalama aktivite
+                double avgActivity = totalActivity / weights[l - 1].size();
+                layerActivities.push_back({avgActivity, l});
+            }
+
+            // En düşük aktiviteye sahip katmanı bul
+            auto minLayer = min_element(layerActivities.begin(), layerActivities.end());
+
+            if (debug)
+            {
+                cout << "Most inactive layer: " << minLayer->second
+                     << " (activity: " << minLayer->first << ")" << endl;
+            }
+
+            return removeLayerAt(minLayer->second);
+        }
+
+        // Katman sayısını otomatik optimize et
+        bool optimizeLayerCount()
+        {
+            // Mevcut katman yapısını analiz et
+            size_t inputSize = weights[0][0].size();
+            size_t outputSize = weights.back().size();
+            size_t currentHiddenCount = weights.size() - 1;
+
+            // İdeal katman sayısını hesapla
+            int idealHiddenCount = hiddenLayers_logImproved(inputSize, outputSize, "medium");
+
+            if (debug)
+            {
+                cout << "Current hidden layers: " << currentHiddenCount << endl;
+                cout << "Ideal hidden layers: " << idealHiddenCount << endl;
+            }
+
+            bool changed = false;
+
+            // Fazla katman varsa sil
+            while (currentHiddenCount > idealHiddenCount && currentHiddenCount > 1)
+            {
+                if (removeMostInactiveLayer())
+                {
+                    currentHiddenCount--;
+                    changed = true;
+                }
+                else
+                {
+                    break;
+                }
+            }
+
+            // Eksik katman varsa ekle
+            while (currentHiddenCount < idealHiddenCount)
+            {
+                // Optimal pozisyonu bul (en küçük katmandan sonra)
+                size_t optimalPos = findSmallestHiddenLayer() + 1;
+
+                if (addLayerAt(optimalPos))
+                {
+                    currentHiddenCount++;
+                    changed = true;
+                }
+                else
+                {
+                    break;
+                }
+            }
+
+            return changed;
+        }
+
+        // Katman bilgilerini yazdır
+        void printLayerInfo()
+        {
+            cout << "\n==== Layer Information ====" << endl;
+            cout << "Total layers (including input/output): " << weights.size() + 1 << endl;
+            cout << "Hidden layers: " << weights.size() - 1 << endl;
+            cout << "\nLayer details:" << endl;
+
+            // Input layer
+            cout << "Layer 0 (Input): " << weights[0][0].size() << " neurons" << endl;
+
+            // Hidden layers
+            for (size_t l = 0; l < weights.size() - 1; l++)
+            {
+                double avgActivity = 0.0;
+                for (size_t n = 0; n < weights[l].size(); n++)
+                {
+                    avgActivity += calculateNeuronActivity(l + 1, n);
+                }
+                avgActivity /= weights[l].size();
+
+                cout << "Layer " << (l + 1) << " (Hidden): " << weights[l].size()
+                     << " neurons, avg activity: " << avgActivity << endl;
+            }
+
+            // Output layer
+            cout << "Layer " << weights.size() << " (Output): " << weights.back().size() << " neurons" << endl;
+            cout << "==========================\n"
+                 << endl;
+        }
 
         // YENI: Piramit yapiya gore fazla noronlari sil
         // DUZELTILMIS: Piramit yapiya gore fazla noronlari sil
@@ -229,6 +516,7 @@ public:
             2 : slope close to zero end train
             3 : neuron removed
             4 : neuron added
+            5 : layers changed
             */
 
             double slope = computeErrorSlope(150);
@@ -304,9 +592,13 @@ public:
                             return 4;
                         }
 
-                        if (removeExcessNeuronsFromPyramid() )//|| removeOnlyTrulyInactiveNeurons())
+                        if (removeExcessNeuronsFromPyramid()) //|| removeOnlyTrulyInactiveNeurons())
                         {
                             return 4;
+                        }
+                        if (optimizeLayerCount())
+                        {
+                            return 5;
                         }
 
                         //// Piramit yapisini koruyarak en uygun katmana noron ekle
@@ -817,6 +1109,19 @@ public:
                     }
                 }
             }
+
+            cout << "\n";
+
+            // Katman basina noron sayilarini yazdir
+            cout << "Layer neuron counts: ";
+            cout << "[" << weights[0][0].size() << "] "; // Input layer
+
+            for (size_t l = 0; l < weights.size(); l++)
+            {
+                cout << "[" << weights[l].size() << "] ";
+            }
+            cout << "\n";
+
             cout << "=========================\n";
         }
 
@@ -1065,6 +1370,136 @@ public:
             return slopeOverall; // istersen slopeRecent de donebilirsin
         }
 
+        bool saveToFile(const string &filename)
+        {
+            ofstream file(filename, ios::binary);
+            if (!file.is_open())
+            {
+                if (debug)
+                    cout << "[ERROR] Dosya acilamadi: " << filename << endl;
+                return false;
+            }
+
+            // 1. Aktivasyon tipini kaydet
+            size_t typeLen = activationType.length();
+            file.write(reinterpret_cast<const char *>(&typeLen), sizeof(typeLen));
+            file.write(activationType.c_str(), typeLen);
+
+            // 2. Learning rate ve diğer parametreleri kaydet
+            file.write(reinterpret_cast<const char *>(&learningRate), sizeof(learningRate));
+            file.write(reinterpret_cast<const char *>(&lrChanged), sizeof(lrChanged));
+            file.write(reinterpret_cast<const char *>(&modelChangedSelf), sizeof(modelChangedSelf));
+
+            // 3. Errors vector'ünü kaydet
+            size_t errSize = errors.size();
+            file.write(reinterpret_cast<const char *>(&errSize), sizeof(errSize));
+            file.write(reinterpret_cast<const char *>(errors.data()), errSize * sizeof(double));
+
+            // 4. Weights yapısını kaydet
+            size_t numLayers = weights.size();
+            file.write(reinterpret_cast<const char *>(&numLayers), sizeof(numLayers));
+
+            for (const auto &layer : weights)
+            {
+                size_t numNeurons = layer.size();
+                file.write(reinterpret_cast<const char *>(&numNeurons), sizeof(numNeurons));
+
+                for (const auto &neuron : layer)
+                {
+                    size_t numWeights = neuron.size();
+                    file.write(reinterpret_cast<const char *>(&numWeights), sizeof(numWeights));
+                    file.write(reinterpret_cast<const char *>(neuron.data()), numWeights * sizeof(double));
+                }
+            }
+
+            // 5. Biases yapısını kaydet
+            size_t numBiasLayers = biases.size();
+            file.write(reinterpret_cast<const char *>(&numBiasLayers), sizeof(numBiasLayers));
+
+            for (const auto &layer : biases)
+            {
+                size_t numBiases = layer.size();
+                file.write(reinterpret_cast<const char *>(&numBiases), sizeof(numBiases));
+                file.write(reinterpret_cast<const char *>(layer.data()), numBiases * sizeof(double));
+            }
+
+            file.close();
+            if (debug)
+                cout << "[INFO] Model basariyla kaydedildi: " << filename << endl;
+            return true;
+        }
+
+        // Modeli dosyadan yükle
+        bool loadFromFile(const string &filename)
+        {
+            ifstream file(filename, ios::binary);
+            if (!file.is_open())
+            {
+                if (debug)
+                    cout << "[ERROR] Dosya acilamadi: " << filename << endl;
+                return false;
+            }
+
+            // 1. Aktivasyon tipini oku
+            size_t typeLen;
+            file.read(reinterpret_cast<char *>(&typeLen), sizeof(typeLen));
+            activationType.resize(typeLen);
+            file.read(&activationType[0], typeLen);
+
+            // 2. Learning rate ve diğer parametreleri oku
+            file.read(reinterpret_cast<char *>(&learningRate), sizeof(learningRate));
+            file.read(reinterpret_cast<char *>(&lrChanged), sizeof(lrChanged));
+            file.read(reinterpret_cast<char *>(&modelChangedSelf), sizeof(modelChangedSelf));
+
+            // 3. Errors vector'ünü oku
+            size_t errSize;
+            file.read(reinterpret_cast<char *>(&errSize), sizeof(errSize));
+            errors.resize(errSize);
+            file.read(reinterpret_cast<char *>(errors.data()), errSize * sizeof(double));
+
+            // 4. Weights yapısını oku
+            size_t numLayers;
+            file.read(reinterpret_cast<char *>(&numLayers), sizeof(numLayers));
+            weights.resize(numLayers);
+
+            for (auto &layer : weights)
+            {
+                size_t numNeurons;
+                file.read(reinterpret_cast<char *>(&numNeurons), sizeof(numNeurons));
+                layer.resize(numNeurons);
+
+                for (auto &neuron : layer)
+                {
+                    size_t numWeights;
+                    file.read(reinterpret_cast<char *>(&numWeights), sizeof(numWeights));
+                    neuron.resize(numWeights);
+                    file.read(reinterpret_cast<char *>(neuron.data()), numWeights * sizeof(double));
+                }
+            }
+
+            // 5. Biases yapısını oku
+            size_t numBiasLayers;
+            file.read(reinterpret_cast<char *>(&numBiasLayers), sizeof(numBiasLayers));
+            biases.resize(numBiasLayers);
+
+            for (auto &layer : biases)
+            {
+                size_t numBiases;
+                file.read(reinterpret_cast<char *>(&numBiases), sizeof(numBiases));
+                layer.resize(numBiases);
+                file.read(reinterpret_cast<char *>(layer.data()), numBiases * sizeof(double));
+            }
+
+            // Cache'leri temizle
+            layerInputs.clear();
+            layerOutputs.clear();
+
+            file.close();
+            if (debug)
+                cout << "[INFO] Model basariyla yuklendi: " << filename << endl;
+            return true;
+        }
+
     private:
         vector<vector<double>> layerInputs;
         vector<vector<double>> layerOutputs;
@@ -1106,6 +1541,59 @@ public:
         // if (lr < 0)
         //     lr = learningRate; // Eger kullanici bu fonksiyonu cagirirken lr vermezse default kullanilacak learningRate yani
         return models[key].train(inputs, targets, targetError);
+    }
+
+    bool saveModel(const string &modelKey, const string &filename)
+    {
+        auto it = models.find(modelKey);
+        if (it == models.end())
+        {
+            if (debug)
+                cout << "[ERROR] Model bulunamadi: " << modelKey << endl;
+            return false;
+        }
+
+        // Model dosyası adını ve key'i kaydet
+        ofstream metaFile(filename + ".meta");
+        if (metaFile.is_open())
+        {
+            metaFile << modelKey << endl;
+            metaFile.close();
+        }
+
+        return it->second.saveToFile(filename);
+    }
+
+    // Model yükleme fonksiyonu
+    bool loadModel(const string &filename, const string &newModelKey = "")
+    {
+        string modelKey = newModelKey;
+
+        // Eğer key verilmemişse, meta dosyadan oku
+        if (modelKey.empty())
+        {
+            ifstream metaFile(filename + ".meta");
+            if (metaFile.is_open())
+            {
+                getline(metaFile, modelKey);
+                metaFile.close();
+            }
+            else
+            {
+                modelKey = "loaded_model";
+            }
+        }
+
+        Network net;
+        if (!net.loadFromFile(filename))
+        {
+            return false;
+        }
+
+        models[modelKey] = net;
+        if (debug)
+            cout << "[INFO] Model '" << modelKey << "' olarak yuklendi" << endl;
+        return true;
     }
 };
 
@@ -1245,15 +1733,72 @@ void testModelFromCSV(CorticalColumn &cc, const string &modelKey, const string &
     cout << "\nModel Ortalama Dogruluk: " << finalAccuracy << "% (" << totalSamples << " ornek uzerinden)" << endl;
 }
 
+void ensureCSVHeader(
+    const string &csvFile,
+    int inputSize,
+    int outputSize)
+{
+    // Beklenen header'ı oluştur (1'den başlar)
+    string expectedHeader;
+
+    for (int i = 1; i <= inputSize; i++)
+    {
+        expectedHeader += "input" + to_string(i) + ",";
+    }
+
+    for (int i = 1; i <= outputSize; i++)
+    {
+        expectedHeader += "target" + to_string(i);
+        if (i != outputSize)
+            expectedHeader += ",";
+    }
+
+    // Dosya var mı?
+    ifstream in(csvFile);
+    if (!in.good())
+    {
+        // Dosya yok → sadece header yaz
+        ofstream out(csvFile);
+        out << expectedHeader << "\n";
+        return;
+    }
+
+    // İlk satırı oku
+    string firstLine;
+    getline(in, firstLine);
+    in.close();
+
+    // Header zaten doğruysa çık
+    if (firstLine == expectedHeader)
+        return;
+
+    // Header yoksa → dosyayı yeniden yaz
+    vector<string> lines;
+    lines.reserve(1024); // küçük performans iyileştirmesi
+
+    lines.push_back(expectedHeader);
+
+    ifstream in2(csvFile);
+    string line;
+    while (getline(in2, line))
+    {
+        lines.push_back(line);
+    }
+    in2.close();
+
+    ofstream out(csvFile, ios::trunc);
+    for (const auto &l : lines)
+        out << l << "\n";
+}
+
 void trainFromCSV(CorticalColumn &cc, const string &modelKey, const string &csvFile,
-                  int inputSize, int outputSize, double targetError, bool isNewData = false)
+                  int inputSize, int outputSize, double targetError, bool isNewData = false, int maxEpoch = 1000)
 {
     string message = isNewData ? "Yeni ornek eklendi, yeniden egitim basliyor..."
                                : "CSV'deki tum verilerle yeniden egitim basliyor...";
     cout << message << endl;
 
     double avgError = 1;
-    int maxEpoch = 500;
 
     for (int epoch = 0; epoch < maxEpoch; epoch++)
     {
@@ -1263,6 +1808,7 @@ void trainFromCSV(CorticalColumn &cc, const string &modelKey, const string &csvF
             cerr << "CSV dosyasi acilamadi: " << csvFile << endl;
             break;
         }
+        ensureCSVHeader(csvFile, inputSize, outputSize);
 
         string header;
         getline(file, header);
@@ -1350,7 +1896,7 @@ void trainFromCSV(CorticalColumn &cc, const string &modelKey, const string &csvF
         }
 
         // Hata hedefine ulasildi mi kontrol et
-        if ((isNewData && avgError < targetError) || (!isNewData && avgError < targetError))
+        if (avgError < targetError)
         {
             log_saver("Stopped due to target error...");
             break;
@@ -1366,14 +1912,266 @@ void trainFromCSV(CorticalColumn &cc, const string &modelKey, const string &csvF
     cout << "Egitim tamamlandi. Ortalama hata: " << avgError << endl;
 }
 
-// Kullanicidan surekli veri al, CSV'ye yaz ve modeli egit
-void interactiveTraining(CorticalColumn &cc, const string &modelKey, const string &csvFile,
-                         int inputSize, int outputSize, double targetError = 0.05)
+const int EMB_SIZE = 50;
+
+#include <sqlite3.h>
+
+unordered_map<string, vector<float>> load_embeddings_sqlite(
+    const string &db_path,
+    int EMB_SIZE)
+{
+    unordered_map<string, vector<float>> embeddings;
+    sqlite3 *db;
+
+    if (sqlite3_open(db_path.c_str(), &db) != SQLITE_OK)
+    {
+        cerr << "[ERROR] SQLite acilamadi: " << sqlite3_errmsg(db) << endl;
+        return embeddings;
+    }
+
+    const char *sql = "SELECT word, vector FROM embeddings;";
+    sqlite3_stmt *stmt;
+
+    if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) != SQLITE_OK)
+    {
+        cerr << "[ERROR] SQL prepare hatasi\n";
+        sqlite3_close(db);
+        return embeddings;
+    }
+
+    while (sqlite3_step(stmt) == SQLITE_ROW)
+    {
+        string word = reinterpret_cast<const char *>(sqlite3_column_text(stmt, 0));
+        string vec_str = reinterpret_cast<const char *>(sqlite3_column_text(stmt, 1));
+
+        vector<float> vec;
+        vec.reserve(EMB_SIZE);
+
+        stringstream ss(vec_str);
+        string val;
+        while (getline(ss, val, ','))
+        {
+            vec.push_back(stof(val));
+        }
+
+        if ((int)vec.size() == EMB_SIZE)
+        {
+            embeddings[word] = vec;
+        }
+    }
+
+    sqlite3_finalize(stmt);
+    sqlite3_close(db);
+
+    return embeddings;
+}
+
+/* =========================
+   EMBEDDING LOAD
+========================= */
+unordered_map<string, vector<float>> load_embeddings(const string &file)
+{
+    unordered_map<string, vector<float>> emb;
+    ifstream fin(file);
+
+    string line;
+    while (getline(fin, line))
+    {
+        stringstream ss(line);
+        string word;
+        ss >> word;
+
+        vector<float> vec(EMB_SIZE);
+        for (int i = 0; i < EMB_SIZE; i++)
+        {
+            ss >> vec[i];
+        }
+        emb[word] = vec;
+    }
+    return emb;
+}
+
+/* =========================
+   TOKENIZER
+========================= */
+vector<string> tokenize(const string &sentence)
+{
+    vector<string> tokens;
+    stringstream ss(sentence);
+    string word;
+    while (ss >> word)
+    {
+        tokens.push_back(word);
+    }
+    return tokens;
+}
+
+/* =========================
+   SENTENCE EMBEDDING
+========================= */
+vector<float> sentence_embedding(
+    const string &sentence,
+    unordered_map<string, vector<float>> &emb)
+{
+    vector<float> result(EMB_SIZE, 0.0f);
+    auto tokens = tokenize(sentence);
+
+    int count = 0;
+    for (auto &w : tokens)
+    {
+        auto it = emb.find(w);
+        if (it == emb.end())
+            continue;
+
+        for (int i = 0; i < EMB_SIZE; i++)
+        {
+            result[i] += it->second[i];
+        }
+        count++;
+    }
+
+    if (count == 0)
+        return result;
+
+    float inv = 1.0f / count;
+    for (float &v : result)
+        v *= inv;
+
+    return result;
+}
+
+// En yakın kelimeyi embedding'den bul
+string findClosestWord(
+    const vector<float> &target,
+    unordered_map<string, vector<float>> &embeddings,
+    const set<string> &excludeWords = {})
+{
+    string bestWord;
+    float bestSim = -1e9;
+
+    for (const auto &[word, emb] : embeddings)
+    {
+        // Exclude edilmiş kelimeleri atla
+        if (excludeWords.count(word))
+            continue;
+
+        // Cosine similarity hesapla
+        float dotProduct = 0.0f;
+        float normA = 0.0f, normB = 0.0f;
+
+        for (int i = 0; i < EMB_SIZE; i++)
+        {
+            dotProduct += target[i] * emb[i];
+            normA += target[i] * target[i];
+            normB += emb[i] * emb[i];
+        }
+
+        float similarity = dotProduct / (sqrt(normA) * sqrt(normB) + 1e-8f);
+
+        if (similarity > bestSim)
+        {
+            bestSim = similarity;
+            bestWord = word;
+        }
+    }
+
+    return bestWord;
+}
+
+// Float vector'ü double vector'e dönüştür
+vector<double> floatToDouble(const vector<float> &fvec)
+{
+    return vector<double>(fvec.begin(), fvec.end());
+}
+
+// Double vector'ü float vector'e dönüştür
+vector<float> doubleToFloat(const vector<double> &dvec)
+{
+    return vector<float>(dvec.begin(), dvec.end());
+}
+
+// Text generation fonksiyonu
+string generateText(
+    CorticalColumn &cc,
+    const string &modelKey,
+    const string &prompt,
+    unordered_map<string, vector<float>> &embeddings,
+    int maxWords = 20)
+{
+    // Prompt'u embedding'e çevir
+    auto promptEmb = sentence_embedding(prompt, embeddings);
+    auto input = floatToDouble(promptEmb);
+
+    string generatedText = prompt;
+    set<string> recentWords; // Son kullanılan kelimeleri takip et
+
+    for (int i = 0; i < maxWords; i++)
+    {
+        // Forward pass
+        auto output = cc.forward(modelKey, input);
+        auto outputFloat = doubleToFloat(output);
+
+        // En yakın kelimeyi bul (son 5 kelimeyi exclude et)
+        string nextWord = findClosestWord(outputFloat, embeddings, recentWords);
+
+        if (nextWord.empty())
+            break;
+
+        generatedText += " " + nextWord;
+
+        // Recent words'ü güncelle (sliding window)
+        recentWords.insert(nextWord);
+        if (recentWords.size() > 5)
+        {
+            recentWords.erase(recentWords.begin());
+        }
+
+        // Çıktıyı yeni input olarak kullan
+        input = output;
+    }
+
+    return generatedText;
+}
+
+void helpPage()
 {
     cout << "\n==== Etkilesimli Egitim Modu ====\n";
-    cout << "Format: input1,input2,...,inputN - output1,output2,...,outputM\n";
-    cout << "Eger '-' koymazsan sadece input forward edilir.\n";
-    cout << "Cikmak icin 'exit' yaz.\n\n";
+    cout << "Komutlar:\n";
+    cout << "  exit/quit           - Cikis\n";
+    cout << "  help                - Komutlar\n";
+    cout << "  train [error] [ep]  - CSV'den egitim\n";
+    cout << "  save <filename>     - Modeli kaydet\n";
+    cout << "  load <filename>     - Model yukle\n";
+    cout << "  generate <prompt>   - Text uret (embeddings gerekli)\n";
+    cout << "  print               - Model yapisini goster\n";
+    cout << "  graph               - Grafik olustur\n";
+    cout << "  terminal <cmd>      - Terminal komutu calistir\n\n";
+}
+
+void interactiveTraining(
+    CorticalColumn &cc,
+    const string &modelKey,
+    const string &csvFile,
+    int inputSize,
+    int outputSize,
+    double targetError = 0.05,
+    int maxEpoch = 1000)
+{
+
+    helpPage();
+
+    unordered_map<string, vector<float>> embeddings;
+
+    if (ifstream("LLM/Embeddings/embeddings.db").good())
+    {
+        embeddings = load_embeddings_sqlite("LLM/Embeddings/embeddings.db", EMB_SIZE);
+        cout << "[INFO] Embeddings yuklendi ("
+             << embeddings.size() << " kelime)\n";
+    }
+    else
+    {
+        cout << "[ERROR] embeddings.db bulunamadi...\n";
+    }
 
     while (true)
     {
@@ -1382,40 +2180,179 @@ void interactiveTraining(CorticalColumn &cc, const string &modelKey, const strin
         getline(cin, line);
 
         if (line == "exit" || line == "quit")
+        {
             break;
+        }
+        else if (line == "help")
+        {
+            helpPage();
+            continue;
+        }
+        // SAVE KOMUTU
+        else if (line.rfind("save", 0) == 0)
+        {
+            stringstream ss(line);
+            string cmd, filename;
+            ss >> cmd >> filename;
+
+            if (filename.empty())
+            {
+                cout << "[ERROR] Kullanim: save <filename>" << endl;
+                continue;
+            }
+
+            if (cc.saveModel(modelKey, filename))
+            {
+                cout << "[INFO] Model kaydedildi: " << filename << endl;
+            }
+            else
+            {
+                cout << "[ERROR] Model kaydedilemedi!" << endl;
+            }
+            continue;
+        }
+        // LOAD KOMUTU
+        else if (line.rfind("load", 0) == 0)
+        {
+            stringstream ss(line);
+            string cmd, filename;
+            ss >> cmd >> filename;
+
+            if (filename.empty())
+            {
+                cout << "[ERROR] Kullanim: load <filename>" << endl;
+                continue;
+            }
+
+            if (cc.loadModel(filename, modelKey))
+            {
+                cout << "[INFO] Model yuklendi: " << filename << endl;
+            }
+            else
+            {
+                cout << "[ERROR] Model yuklenelemedi!" << endl;
+            }
+            continue;
+        }
+        // GENERATE KOMUTU
+        else if (line.rfind("generate", 0) == 0)
+        {
+            if (embeddings.empty())
+            {
+                cout << "[ERROR] Embeddings yuklenmemis! 'embeddings.txt' dosyasi gerekli." << endl;
+                continue;
+            }
+
+            string restOfLine = line.substr(9); // "generate " sonrası
+            restOfLine.erase(0, restOfLine.find_first_not_of(" \t"));
+
+            if (restOfLine.empty())
+            {
+                cout << "[ERROR] Kullanim: generate <prompt> [-e <num>]" << endl;
+                cout << "         Ornek: generate hello world" << endl;
+                cout << "         Ornek: generate hello world -e 5" << endl;
+                continue;
+            }
+
+            // -e parametresini kontrol et
+            int maxWords = 20; // default değer
+            string prompt = restOfLine;
+
+            size_t ePos = restOfLine.rfind("-e");
+            if (ePos != string::npos)
+            {
+                // -e bulundu, sayıyı parse et
+                string beforeE = restOfLine.substr(0, ePos);
+                string afterE = restOfLine.substr(ePos + 2);
+
+                // beforeE'den boşlukları temizle
+                beforeE.erase(beforeE.find_last_not_of(" \t") + 1);
+
+                // afterE'den sayıyı al
+                afterE.erase(0, afterE.find_first_not_of(" \t"));
+
+                try
+                {
+                    maxWords = stoi(afterE);
+                    if (maxWords <= 0 || maxWords > 1000)
+                    {
+                        cout << "[WARNING] Gecersiz sayi: " << afterE << ", default 20 kullaniliyor" << endl;
+                        maxWords = 20;
+                    }
+                    prompt = beforeE;
+                }
+                catch (...)
+                {
+                    cout << "[WARNING] -e parametresi parse edilemedi, default 20 kullaniliyor" << endl;
+                }
+            }
+
+            prompt.erase(0, prompt.find_first_not_of(" \t"));
+            prompt.erase(prompt.find_last_not_of(" \t") + 1);
+
+            if (prompt.empty())
+            {
+                cout << "[ERROR] Prompt bos olamaz!" << endl;
+                continue;
+            }
+
+            cout << "\n[GENERATING TEXT...] (max " << maxWords << " words)\n";
+            string generated = generateText(cc, modelKey, prompt, embeddings, maxWords);
+            cout << "\nGenerated Text:\n"
+                 << generated << "\n"
+                 << endl;
+            continue;
+        }
         else if (line == "graph")
         {
             system("python3 Helpers/network_changes_logs.py");
             continue;
         }
-        else if (line.rfind("train", 0) == 0) // "train" ile başlıyorsa
+        else if (line.rfind("terminal", 0) == 0)
         {
-            string arg = line.substr(5); // "train" sonrası
-            if (!arg.empty())
+            string cmd = line.substr(8);
+            cmd.erase(0, cmd.find_first_not_of(" \t"));
+
+            if (cmd.empty())
             {
-                try
+                cout << "[ERROR] terminal komutu bos olamaz" << endl;
+                continue;
+            }
+
+            cout << "[TERMINAL] calistiriliyor: " << cmd << endl;
+            system(cmd.c_str());
+            continue;
+        }
+        else if (line.rfind("train", 0) == 0)
+        {
+            stringstream ss(line);
+            string cmd;
+            ss >> cmd;
+
+            double newTargetError;
+            int newMaxEpoch;
+
+            if (ss >> newTargetError)
+            {
+                targetError = newTargetError;
+                cout << "[INFO] targetError guncellendi: " << targetError << endl;
+
+                if (ss >> newMaxEpoch)
                 {
-                    // Baştaki boşlukları temizle
-                    arg.erase(0, arg.find_first_not_of(" \t"));
-                    if (!arg.empty())
-                    {
-                        targetError = stod(arg);
-                        cout << "[INFO] targetError güncellendi: " << targetError << endl;
-                    }
-                }
-                catch (const exception &e)
-                {
-                    cout << "[ERROR] Geçersiz sayı formatı: " << arg << endl;
+                    maxEpoch = newMaxEpoch;
+                    cout << "[INFO] maxEpoch guncellendi: " << maxEpoch << endl;
                 }
             }
-            line = "train"; // komut olarak kullanılacak
-        }
 
+            trainFromCSV(cc, modelKey, csvFile, inputSize, outputSize, targetError, false, maxEpoch);
+            continue;
+        }
         else if (line == "print")
         {
             cc.models[modelKey].printModelASCII(modelKey, true);
             continue;
         }
+
         if (line.empty())
             continue;
 
@@ -1513,14 +2450,14 @@ void interactiveTraining(CorticalColumn &cc, const string &modelKey, const strin
         // Ana kodda kullanim:
         if (line == "train")
         {
-            trainFromCSV(cc, modelKey, csvFile, inputSize, outputSize, targetError, false);
+            trainFromCSV(cc, modelKey, csvFile, inputSize, outputSize, targetError, false, maxEpoch);
             continue;
         }
 
         // Eger target verilmisse egit
         if (!targets.empty())
         {
-            trainFromCSV(cc, modelKey, csvFile, inputSize, outputSize, targetError, true);
+            trainFromCSV(cc, modelKey, csvFile, inputSize, outputSize, targetError, true, maxEpoch);
         }
 
         // Forward sonucu goster
@@ -1542,142 +2479,61 @@ void interactiveTraining(CorticalColumn &cc, const string &modelKey, const strin
 }
 
 /*
-int main()
-{
-    srand(time(nullptr));
-    CorticalColumn cc;
 
-    string filename = "parity_problem.csv";
-    DatasetInfo info = getDatasetInfo(filename);
 
-    // Modeli CSV'ye gore otomatik boyutlandir
-    vector<int> layers = {info.inputSize, 24, 6, info.outputSize}; // gizli noronlar
-    cc.addModel("parity", layers, "sigmoid");
 
-    int epochNum = 2000;
-    double targetError = 0.001;
+// =========================
+//   MAIN
+//=========================
+int main() {
+    auto embeddings = load_embeddings("embeddings.txt");
 
-    // Baslangic zamani
-    auto startTime = chrono::high_resolution_clock::now();
+    string sentence;
+    cout << "Sentence: ";
+    getline(cin, sentence);
 
-    double lastEpochError = 0.0;
+    auto vec = sentence_embedding(sentence, embeddings);
 
-    for (int epoch = 0; epoch < epochNum; epoch++)
-    {
-        double epochError = 0.0;
-        int lineCount = 0;
-
-        ifstream file(filename);
-        string header;
-        getline(file, header); // basligi atla
-
-        vector<double> x, y;
-        while (readCSVLine(file, x, y, info.inputSize, info.outputSize))
-        {
-            double err = cc.train("parity", x, y);
-            epochError += err;
-            lineCount++;
-        }
-
-        epochError /= lineCount;
-        lastEpochError = epochError;
-        cc.models["parity"].errors.push_back(epochError);
-
-        if (debug)
-            log_saver(to_string(epochError));
-
-        progress_bar(epoch, epochNum);
-
-        if (epochError < targetError)
-        {
-            log_saver("Stopped due targetError...");
-            break;
-        }
-
-        if ((epoch + 1) % 150 == 0)
-        {
-            int monitor = cc.models["parity"].monitorNetwork();
-            if (monitor == 2)
-            {
-                log_saver("Stopped due closing to zero slope...");
-                break;
-            }
-        }
+    cout << "\nSentence Vector (first 10 dims):\n";
+    for (int i = 0; i < 10; i++) {
+        cout << vec[i] << " ";
     }
-
-    // Bitis zamani
-    auto endTime = chrono::high_resolution_clock::now();
-    auto durationMs = chrono::duration_cast<chrono::milliseconds>(endTime - startTime).count();
-    double durationSec = durationMs / 1000.0;
-
     cout << endl;
-    cout << "==== Egitim Tamamlandi ====" << endl;
 
-    if (durationSec >= 1.0)
-        cout << "Gecen sure: " << durationSec << " saniye" << endl;
-    else
-        cout << "Gecen sure: " << durationMs << " milisaniye" << endl;
-
-    cout << "Son epoch hatasi: " << lastEpochError << endl
-         << endl;
-
-    cout << "==== Test Basliyor ====" << endl;
-    string testFile = "parity_problem.csv"; // test icin ayri CSV
-    testModelFromCSV(cc, "parity", testFile);
-
-
-    system("python3 Helpers/network_changes_logs.py");
-
-    cout << "\n==== Kullanicidan Girdi Al ====" << endl;
-    cout << "Virgulle ayrilmis input degerlerini gir (or: 0.5,1,0,1): ";
-
-    string inputLine;
-    getline(cin, inputLine); // once cin.get() kaldirman lazim, onun yerine burasi calisacak
-
-    stringstream ss(inputLine);
-    string token;
-    vector<double> userInput;
-
-    while (getline(ss, token, ','))
-    {
-        try
-        {
-            userInput.push_back(stod(token));
-        }
-        catch (...)
-        {
-            cerr << "Gecersiz sayi girdin: " << token << endl;
-        }
-    }
-
-    if (!userInput.empty())
-    {
-        auto result = cc.forward("parity", userInput);
-
-        cout << "Model ciktisi: ";
-        for (double v : result)
-            cout << v << " ";
-        cout << endl;
-    }
-    else
-    {
-        cout << "Hic gecerli input girmedin!" << endl;
-    }
-    cin.get();
     return 0;
-}*/
+}
+
+
+*/
+
+/*
+
+
+ÖRNEK KULLANIM:
+> save my_model.bin              # Modeli kaydet
+> load my_model.bin              # Modeli yükle
+> generate hello world           # 20 kelime üret
+> train 0.01 5000               # CSV'den eğitim
+> print                         # Model yapısını göster
+> graph                         # Grafik çiz
+> terminal python test.py       # Terminal komutu
+
+*/
 
 int main()
 {
     srand(time(nullptr));
     CorticalColumn cc;
 
-    // Baslangic modelini olustur (4 giris, 2 cikis)
-    vector<int> layers = {4, 1, 2};
-    cc.addModel("parity", layers, "sigmoid");
+    // Model oluştur veya yükle
+    vector<int> layers = {50, 1024, 512, 128, 50};
+    cc.addModel("text_gen", layers, "tanh");
 
-    // Etkilesimli mod baslat
-    interactiveTraining(cc, "parity", "data.csv", layers[0], layers.back(), 0.05);
+    // Eğer kaydedilmiş model varsa:
+    // cc.loadModel("saved_model.bin", "text_gen");
+
+    // Interactive mode başlat
+    interactiveTraining(cc, "text_gen", "data.csv", layers[0], layers.back(), 0.05);
 
     return 0;
 }
