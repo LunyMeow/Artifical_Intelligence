@@ -12,10 +12,15 @@ import dotenv from 'dotenv';
 // 🔧 .env dosyasını yükle
 dotenv.config();
 
+
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 const app = express();
+
+app.set('trust proxy', 1);
+
 
 // 🔐 GÜVENLI SECRET YÖNETIMI
 const SECRET = process.env.JWT_SECRET;
