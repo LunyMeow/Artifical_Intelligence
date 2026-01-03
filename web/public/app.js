@@ -1,6 +1,7 @@
 import createModule from "/wasm/model.js";
 
 let Module, loadModel, runInference;
+let currentUser = null; // 👈 Mevcut kullanıcı bilgisi
 
 // Status güncelleme fonksiyonu
 function updateStatus(message, type) {
@@ -23,7 +24,11 @@ async function checkAuth() {
             location.href = "/login.html";
             return false;
         }
-        updateStatus('<span class="loading"></span> Kimlik doğrulandı, model yükleniyor...', 'loading');
+
+        const userData = await r.json();
+        currentUser = userData; // 👈 Kullanıcı bilgisini sakla
+
+        updateStatus(`<span class="loading"></span> Hoş geldin ${userData.username}, model yükleniyor...`, 'loading');
         return true;
     } catch (e) {
         console.error("Auth check failed:", e);
@@ -118,6 +123,9 @@ async function init() {
         const authenticated = await checkAuth();
         if (!authenticated) return;
 
+        // 👇 Kullanıcının model klasörünü göster
+        console.log(`📁 Model klasörü: ${currentUser.modelFolder}`);
+
         // WASM modülünü yükle
         updateStatus('<span class="loading"></span> WASM modülü yükleniyor...', 'loading');
         Module = await createModule({
@@ -133,20 +141,20 @@ async function init() {
 
         // Dizin oluştur (varsa hata vermesin)
         try {
-            Module.FS.mkdir('/user_0000');
+            Module.FS.mkdir(`/${currentUser.modelFolder}`);
         } catch (e) {
             // Directory already exists → ignore
         }
 
-        // Model dosyalarını indir (GÜVENLİ ENDPOINT'TEN)
-        updateStatus('<span class="loading"></span> Model dosyaları indiriliyor...', 'loading');
+        // Model dosyalarını indir (KULLANICIYA ÖZEL)
+        updateStatus(`<span class="loading"></span> ${currentUser.username} için model indiriliyor...`, 'loading');
 
         const binResp = await fetch('/model/command_model.bin');
         if (!binResp.ok) throw new Error("Model binary yüklenemedi");
         const bin = await binResp.arrayBuffer();
 
         Module.FS.writeFile(
-            '/user_0000/command_model.bin',
+            `/${currentUser.modelFolder}/command_model.bin`,
             new Uint8Array(bin)
         );
 
@@ -155,7 +163,7 @@ async function init() {
         const meta = await metaResp.text();
 
         Module.FS.writeFile(
-            '/user_0000/command_model.meta',
+            `/${currentUser.modelFolder}/command_model.meta`,
             meta
         );
 
@@ -172,14 +180,14 @@ async function init() {
             'string', ['string']
         );
 
-        // Modeli yükle
+        // Modeli yükle (kullanıcıya özel path)
         loadModel(
-            '/user_0000/command_model.bin',
-            '/user_0000/command_model.meta'
+            `/${currentUser.modelFolder}/command_model.bin`,
+            `/${currentUser.modelFolder}/command_model.meta`
         );
 
         // Başarılı
-        updateStatus('✅ Sistem hazır', 'ready');
+        updateStatus(`✅ Sistem hazır (${currentUser.username})`, 'ready');
         document.getElementById('btn').disabled = false;
         document.getElementById('input').focus();
 
@@ -223,7 +231,40 @@ document.addEventListener('DOMContentLoaded', () => {
         console.error("GLOBAL ERROR:", e.error || e.message);
         updateStatus('❌ Sistem hatası', 'error');
     });
+
+    const logoutBtn = document.getElementById("logoutBtn");
+    if (logoutBtn) {
+        logoutBtn.addEventListener("click", logout);
+    }
+
 });
+
+
+async function logout() {
+    try {
+        const r = await fetch("/api/logout", {
+            method: "GET",
+            credentials: "include"
+        });
+
+        // 200, 204, 302 hepsini kabul et
+        if (![200, 204, 302].includes(r.status)) {
+            throw new Error("Logout failed: " + r.status);
+        }
+
+        // Belleği temizle
+        Module = null;
+        loadModel = null;
+        runInference = null;
+        currentUser = null;
+
+        location.href = "/login.html";
+    } catch (e) {
+        console.error("LOGOUT ERROR:", e);
+        alert("Çıkış başarısız (backend reddetti)");
+    }
+}
+
 
 // Sayfa yüklendiğinde başlat
 init();

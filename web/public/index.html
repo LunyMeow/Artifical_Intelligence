@@ -253,14 +253,27 @@
 <body>
     <div class="container">
         <h1>🧠 Secure Neural Network</h1>
-        <p class="subtitle">WebAssembly ile güvenli yapay sinir ağı inferansı <span class="security-badge">🔒 Authenticated</span></p>
+        <p class="subtitle"><span class="security-badge">🔒 Authenticated</span></p>
 
-        <div class="status-container">
+
+        <div class="status-container" style="display:flex; justify-content:space-between; align-items:center;">
             <div class="status-label">Sistem Durumu:</div>
             <div id="status">
                 <span class="loading"></span> Kimlik doğrulanıyor...
             </div>
+            <button id="logoutBtn" style="
+        background:#F44336;
+        color:white;
+        border:none;
+        padding:8px 14px;
+        border-radius:8px;
+        font-weight:600;
+        cursor:pointer;
+    ">
+        Log Off
+    </button>
         </div>
+
 
         <div class="input-group">
             <label for="input">Girdi:</label>

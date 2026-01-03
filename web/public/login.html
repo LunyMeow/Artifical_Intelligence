@@ -1,26 +1,259 @@
 <!DOCTYPE html>
-<html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Güvenli Giriş - ML System</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+
+        .login-container {
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+            padding: 40px;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            width: 100%;
+            max-width: 400px;
+            animation: slideIn 0.5s ease-out;
+        }
+
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateY(-30px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .logo {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+
+        .logo-icon {
+            width: 80px;
+            height: 80px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border-radius: 20px;
+            margin: 0 auto 15px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 40px;
+            color: white;
+            box-shadow: 0 10px 25px rgba(102, 126, 234, 0.4);
+        }
+
+        h2 {
+            text-align: center;
+            color: #333;
+            font-size: 28px;
+            margin-bottom: 10px;
+        }
+
+        .subtitle {
+            text-align: center;
+            color: #666;
+            font-size: 14px;
+            margin-bottom: 30px;
+        }
+
+        .input-group {
+            margin-bottom: 20px;
+            position: relative;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 8px;
+            color: #555;
+            font-weight: 500;
+            font-size: 14px;
+        }
+
+        input {
+            width: 100%;
+            padding: 14px 16px;
+            border: 2px solid #e0e0e0;
+            border-radius: 10px;
+            font-size: 15px;
+            transition: all 0.3s ease;
+            background: white;
+        }
+
+        input:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+
+        input:hover {
+            border-color: #764ba2;
+        }
+
+        .input-icon {
+            position: absolute;
+            right: 16px;
+            top: 42px;
+            color: #999;
+            font-size: 18px;
+        }
+
+        button {
+            width: 100%;
+            padding: 14px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 10px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
+        }
+
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(102, 126, 234, 0.6);
+        }
+
+        button:active {
+            transform: translateY(0);
+        }
+
+        button:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .error-message {
+            background: #fee;
+            color: #c33;
+            padding: 12px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            font-size: 14px;
+            border-left: 4px solid #c33;
+            display: none;
+            animation: shake 0.4s ease;
+        }
+
+        @keyframes shake {
+            0%, 100% { transform: translateX(0); }
+            25% { transform: translateX(-10px); }
+            75% { transform: translateX(10px); }
+        }
+
+        .error-message.show {
+            display: block;
+        }
+
+        .loading {
+            display: inline-block;
+            width: 16px;
+            height: 16px;
+            border: 2px solid rgba(255, 255, 255, 0.3);
+            border-top-color: white;
+            border-radius: 50%;
+            animation: spin 0.6s linear infinite;
+            margin-right: 8px;
+            vertical-align: middle;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .footer {
+            text-align: center;
+            margin-top: 20px;
+            color: #999;
+            font-size: 12px;
+        }
+
+        /* Responsive */
+        @media (max-width: 480px) {
+            .login-container {
+                padding: 30px 25px;
+            }
+
+            h2 {
+                font-size: 24px;
+            }
+        }
+    </style>
+</head>
 <body>
-<h2>Login</h2>
+    <div class="login-container">
+        <div class="logo">
+            <div class="logo-icon">🔐</div>
+            <h2>Güvenli Giriş</h2>
+            <p class="subtitle">ML System Authentication</p>
+        </div>
 
-<input id="u" placeholder="username"><br>
-<input id="p" type="password" placeholder="password"><br>
-<button onclick="login()">Login</button>
+        <div id="errorMessage" class="error-message"></div>
 
-<script>
-async function login() {
-  const r = await fetch("/api/login", {
-    method: "POST",
-    headers: {"Content-Type":"application/json"},
-    body: JSON.stringify({
-      username: u.value,
-      password: p.value
-    })
-  });
+        <form id="loginForm">
+            <div class="input-group">
+                <label for="username">Kullanıcı Adı</label>
+                <input 
+                    type="text" 
+                    id="username" 
+                    name="username"
+                    placeholder="Kullanıcı adınızı girin"
+                    autocomplete="username"
+                    required
+                    minlength="3"
+                    maxlength="20"
+                    pattern="[a-zA-Z0-9_]+"
+                >
+                <span class="input-icon">👤</span>
+            </div>
 
-  if (r.ok) location.href = "/";
-  else alert("Login failed");
-}
-</script>
+            <div class="input-group">
+                <label for="password">Şifre</label>
+                <input 
+                    type="password" 
+                    id="password" 
+                    name="password"
+                    placeholder="Şifrenizi girin"
+                    autocomplete="current-password"
+                    required
+                    minlength="6"
+                >
+                <span class="input-icon">🔒</span>
+            </div>
+
+            <button type="submit" id="loginBtn">
+                Giriş Yap
+            </button>
+        </form>
+
+        <div class="footer">
+            🛡️ Tüm bağlantılar şifrelenir
+        </div>
+    </div>
+
+    <script src="login.js"></script>
 </body>
 </html>
