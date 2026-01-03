@@ -12,7 +12,8 @@ import dotenv from 'dotenv';
 // 🔧 .env dosyasını yükle
 dotenv.config();
 
-const __filename = fileURLToPath(import.meta.url);
+const __filename = fileURLToPath(
+    import.meta.url);
 const __dirname = dirname(__filename);
 
 const app = express();
@@ -125,7 +126,7 @@ function isValidPassword(password) {
 function auth(req, res, next) {
     try {
         const token = req.cookies.auth;
-        
+
         if (!token) {
             return res.status(401).json({ error: "Kimlik doğrulaması gerekli" });
         }
@@ -165,7 +166,7 @@ app.use("/wasm", express.static(path.join(__dirname, "public", "wasm"), {
 }));
 
 // 🔒 MODEL DOSYALARI - KULLANICI BAZLI + Güvenli
-app.get("/model/:file", auth, modelLimiter, async (req, res) => {
+app.get("/model/:file", auth, modelLimiter, async(req, res) => {
     try {
         const allowed = ["command_model.bin", "command_model.meta"];
         const safePath = path.basename(req.params.file); // Path traversal koruması
@@ -189,7 +190,8 @@ app.get("/model/:file", auth, modelLimiter, async (req, res) => {
         }
 
         // Dosya varlığı kontrolü
-        const fs = await import('fs/promises');
+        const fs = await
+        import ('fs/promises');
         try {
             await fs.access(filePath);
         } catch {
@@ -217,12 +219,12 @@ app.get("/api/me", auth, (req, res) => {
         ok: true,
         username: req.user.username,
         modelFolder: req.user.modelFolder,
-        role: USERS_DB[req.user.username]?.role
+        role: USERS_DB[req.user.username] ? .role
     });
 });
 
 // 🔐 LOGIN - Güvenli
-app.post("/api/login", strictLimiter, async (req, res) => {
+app.post("/api/login", strictLimiter, async(req, res) => {
     try {
         const username = sanitizeInput(req.body.username);
         const password = req.body.password;
@@ -253,15 +255,13 @@ app.post("/api/login", strictLimiter, async (req, res) => {
         }
 
         // JWT oluştur
-        const token = jwt.sign(
-            {
+        const token = jwt.sign({
                 username: user ? username : '',
                 modelFolder: user ? user.modelFolder : '',
                 role: user ? user.role : '',
                 iat: Math.floor(Date.now() / 1000)
             },
-            SECRET,
-            {
+            SECRET, {
                 expiresIn: '24h',
                 algorithm: 'HS256',
                 issuer: 'secure-ml-system',
@@ -296,7 +296,7 @@ app.post("/api/login", strictLimiter, async (req, res) => {
 // 🚪 LOGOUT - Güvenli
 app.post("/api/logout", auth, (req, res) => {
     console.log(`🚪 Logout: ${req.user.username}`);
-    
+
     res.clearCookie("auth", {
         httpOnly: true,
         sameSite: "strict",
@@ -330,25 +330,26 @@ app.use((req, res) => {
 // ⚠️ Error Handler
 app.use((err, req, res, next) => {
     console.error("Sunucu hatası:", err);
-    
+
     // Detaylı hata bilgisi sadece development'ta
-    const errorResponse = process.env.NODE_ENV === 'production'
-        ? { error: "Bir hata oluştu" }
-        : { error: err.message, stack: err.stack };
-    
+    const errorResponse = process.env.NODE_ENV === 'production' ?
+        { error: "Bir hata oluştu" } :
+        { error: err.message, stack: err.stack };
+
     res.status(500).json(errorResponse);
 });
 
-// 🚀 Server başlat
+// 🚀 Server başlat (Render uyumlu)
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, '127.0.0.1', () => { // Sadece localhost'tan erişim
+
+app.listen(PORT, () => {
     console.log("✅ Güvenli sunucu başlatıldı");
-    console.log(`🌐 http://localhost:${PORT}`);
+    console.log(`🌐 Port: ${PORT}`);
     console.log(`🔐 Ortam: ${process.env.NODE_ENV || 'development'}`);
     console.log("\n📁 Kullanıcı ve Model Klasörleri:");
     Object.entries(USERS_DB).forEach(([username, data]) => {
-        console.log(`   - ${username} → ${data.modelFolder} (${data.role})`);
+        console.log(`   - ${username} → ${data.modelFolder}`);
     });
     console.log("\n⚠️  UYARI: Production'da şifreleri değiştirin!");
-    console.log("⚠️  UYARI: JWT_SECRET ve PASSWORD_SALT environment variable olarak ayarlayın!");
+    console.log("⚠️  UYARI: JWT_SECRET environment variable olarak ayarlayın!");
 });
