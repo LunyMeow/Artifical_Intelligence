@@ -299,7 +299,7 @@ app.post("/api/login", strictLimiter, async (req, res) => {
 });
 
 // 🚪 LOGOUT - Güvenli
-app.post("/api/logout", auth, (req, res) => {
+app.get("/api/logout", auth, apiLimiter,(req, res) => {
     console.log(`🚪 Logout: ${req.user.username}`);
     
     res.clearCookie("auth", {
