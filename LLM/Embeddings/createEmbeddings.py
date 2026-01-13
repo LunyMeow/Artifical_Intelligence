@@ -2,6 +2,11 @@ import random
 import math
 import sqlite3
 import sys
+import re
+import argparse
+from helpers import helpers as hp
+import bytebpe as bpe
+
 
 
 # =========================
@@ -14,6 +19,17 @@ LR = 0.1
 NEG_SAMPLES = 5
 
 EMB_RANGE = range(EMB_SIZE)
+
+
+# =========================
+# TOKENIZER MODE
+# =========================
+class TokenizerMode:
+    WORD = "word"
+    SUBWORD = "subword"
+    BPE = "bpe"
+
+
 
 # =========================
 # AKTİVASYON FONKSİYONLARI
@@ -43,25 +59,19 @@ def normalize_vector(vec, min_val, max_val):
     """
     Vektörü aktivasyon fonksiyonunun çıktı aralığına göre normalize eder
     """
-    # Vektörün mevcut min-max değerlerini bul
     vec_min = min(vec)
     vec_max = max(vec)
     
     if vec_max == vec_min:
-        # Tüm değerler aynıysa, aralığın ortasını kullan
         normalized = [(min_val + max_val) / 2.0] * len(vec)
     else:
-        # Min-max normalizasyonu (0-1 aralığına)
         normalized = [(v - vec_min) / (vec_max - vec_min) for v in vec]
         
-        # Hedef aralığa ölçeklendir
         if min_val != float('-inf') and max_val != float('inf'):
             normalized = [min_val + v * (max_val - min_val) for v in normalized]
         elif max_val != float('inf'):
-            # Sadece üst sınır var (relu, softplus gibi)
             normalized = [min_val + v * max_val for v in normalized]
         elif min_val != float('-inf'):
-            # Sadece alt sınır var
             normalized = [min_val + v * abs(min_val) for v in normalized]
     
     return normalized
@@ -82,23 +92,86 @@ def random_vector():
 # MODEL
 # =========================
 class SimpleWord2Vec:
-    def __init__(self, activation_type="sigmoid"):
+    def __init__(
+        self,
+        activation_type="sigmoid",
+        is_command_model=False,
+        tokenizer_mode=TokenizerMode.WORD,
+        subword_n=3
+    ):
         self.vocab = {}
         self.W_in = {}
         self.W_out = {}
         self.vocab_list = []
-        
-        # Aktivasyon fonksiyonu bilgilerini al
-        self.act_min, self.act_max, self.activation = get_activation_info(activation_type)
-        self.activation_type = activation_type
-        print(f"[INFO] Aktivasyon fonksiyonu: {activation_type}")
-        print(f"[INFO] Çıktı aralığı: [{self.act_min}, {self.act_max}]")
 
-    def tokenize(self, sentence):
-        return sentence.lower().split()
+        self.is_command_model = is_command_model
+        self.tokenizer_mode = tokenizer_mode
+        self.subword_n = subword_n
+        self.act_min, self.act_max, self.activation = get_activation_info(activation_type) 
+        self.activation_type = activation_type
+
+#Bu fonksiyonun aynısını commandCreator fonksiyonu için de yap veya ortak kullan zaten ikisi aynı amaca hizmet ediyor
+#ne
+
+    def tokenize(
+        self,
+        sentence,
+        mode=TokenizerMode.WORD,
+        subword_n=3
+    ):
+        sentence = sentence.lower()
+    
+        # =========================
+        # WORD TOKENIZER
+        # =========================
+        if mode == TokenizerMode.WORD or mode == TokenizerMode.BPE:
+            tokens = sentence.split()
+    
+            if self.is_command_model:
+                tokens = hp.normalize_command_params(tokens)
+    
+            return tokens
+    
+        # =========================
+        # SUBWORD TOKENIZER (char n-gram)
+        # =========================
+        if mode == TokenizerMode.SUBWORD:
+            tokens = []
+    
+            # ÖNCE word-level ayır
+            words = sentence.split()
+    
+            # Komut modeli ise normalize et
+            if self.is_command_model:
+                words = hp.normalize_command_params(words)
+    
+            for w in words:
+                # 1️⃣ ÖZEL TOKEN → aynen bırak
+                if w.startswith("<") and w.endswith(">"):
+                    tokens.append(w)
+                    continue
+    
+                # 2️⃣ NORMAL KELİME → subword
+                L = len(w)
+                if L < subword_n:
+                    tokens.append(w)  # ✅ Kısa kelimeler olduğu gibi ekleniyor
+                    continue
+    
+                for i in range(L - subword_n + 1):
+                    tokens.append(w[i:i + subword_n])
+    
+            return tokens
+    
+        return []
+
 
     def add_sentence(self, sentence):
-        tokens = self.tokenize(sentence)
+        tokens = self.tokenize(
+        sentence,
+        mode=self.tokenizer_mode,
+        subword_n=self.subword_n
+    )
+
 
         for w in tokens:
             if w not in self.vocab:
@@ -133,7 +206,6 @@ class SimpleWord2Vec:
                     vout = W_out[w_out]
 
                     score = dot(vin, vout)
-                    # Aktivasyon fonksiyonunu kullan
                     activated_score = activation(score)
                     error = 1.0 - activated_score
                     grad = LR * error
@@ -149,7 +221,6 @@ class SimpleWord2Vec:
                         vneg = W_out[neg]
 
                         score = dot(vin, vneg)
-                        # Aktivasyon fonksiyonunu kullan
                         activated_score = activation(score)
                         error = -activated_score
                         grad = LR * error
@@ -160,7 +231,12 @@ class SimpleWord2Vec:
                             vneg[k] += grad * tmp
 
     def sentence_embedding(self, sentence):
-        tokens = self.tokenize(sentence)
+        tokens = self.tokenize(
+        sentence,
+        mode=self.tokenizer_mode,
+        subword_n=self.subword_n
+    )
+
         vec = [0.0] * EMB_SIZE
         cnt = 0
 
@@ -178,9 +254,7 @@ class SimpleWord2Vec:
             for i in EMB_RANGE:
                 vec[i] *= inv
 
-        # Aktivasyon aralığına göre normalize et
         vec = normalize_vector(vec, self.act_min, self.act_max)
-
         return vec
     
     def normalize_all_embeddings(self):
@@ -213,21 +287,17 @@ def save_sqlite(sentence_model, db_name="embeddings.db"):
     for word, vec in sentence_model.W_in.items():
         cur.execute(
             "INSERT OR REPLACE INTO embeddings VALUES (?, ?, ?, ?, ?)",
-            (word, ",".join(map(str, vec)), sentence_model.activation_type, sentence_model.act_min, sentence_model.act_max)
+            (word, ",".join(map(str, vec)), sentence_model.activation_type, 
+             sentence_model.act_min, sentence_model.act_max)
         )
 
     conn.commit()
     conn.close()
 
-
-
-
-
 def check_database(db_name):
     conn = sqlite3.connect(db_name)
     cur = conn.cursor()
     
-    # Get schema
     cur.execute("PRAGMA table_info(embeddings)")
     schema = cur.fetchall()
     print("Database Schema:")
@@ -247,146 +317,254 @@ def check_database(db_name):
     
     conn.close()
 
-
-
 # =========================
 # DOSYA OKUMA
 # =========================
-def load_file(filename):
+def load_file(filename, endThing=""):
     try:
         with open(filename, "r", encoding="utf-8") as f:
-            lines = [l.strip() for l in f if l.strip()]
+            lines = [l.strip() + endThing for l in f if l.strip()]
         return lines
     except FileNotFoundError:
         print(f"[ERROR] '{filename}' dosyası bulunamadı!")
         return None
 
+
+
 # =========================
 # ANA PROGRAM
 # =========================
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(
+        description="Embedding Oluşturucu - Aktivasyon Fonksiyonlu ve Parametre Tipleme Sistemli",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Örnekler:
+  %(prog)s --activation relu --lr 0.15 --epochs 150
+  %(prog)s -a tanh -l 0.2 -e 200 --tokenizer subword --subword-n 4
+  %(prog)s --sentences data/sentences.txt --commands data/commands.txt
+  %(prog)s --help
+
+Mevcut Aktivasyon Fonksiyonları:
+  sigmoid, tanh, relu, leaky_relu, elu, softplus, linear
+
+Not: Komutlardaki parametreler otomatik olarak tip placeholderlarına dönüştürülür:
+  mkdir test_folder  →  mkdir <DIR>
+  rm file.txt        →  rm <FILE>
+  cd /home/user      →  cd <PATH>
+        """
+    )
+    
+    # Aktivasyon ve hiperparametreler
+    parser.add_argument(
+        '-a', '--activation',
+        type=str,
+        default='sigmoid',
+        choices=['sigmoid', 'tanh', 'relu', 'leaky_relu', 'elu', 'softplus', 'linear'],
+        help='Aktivasyon fonksiyonu (default: sigmoid)'
+    )
+    
+    parser.add_argument(
+        '-l', '--lr',
+        type=float,
+        default=0.1,
+        help='Learning rate (default: 0.1)'
+    )
+    
+    parser.add_argument(
+        '-e', '--epochs',
+        type=int,
+        default=100,
+        help='Epoch sayısı (default: 100)'
+    )
+    
+    # Tokenizer ayarları
+    parser.add_argument(
+        '-t', '--tokenizer',
+        type=str,
+        default='word',
+        choices=['word', 'subword', "bpe"],
+        help='Tokenizer modu (default: word)'
+    )
+    
+    parser.add_argument(
+        '-n', '--subword-n',
+        type=int,
+        default=3,
+        help='Subword n-gram değeri (default: 3)'
+    )
+    
+    # Dosya yolları
+    parser.add_argument(
+        '-s', '--sentences',
+        type=str,
+        default='sentences.txt',
+        help='Cümleler dosyası (default: sentences.txt)'
+    )
+    
+    parser.add_argument(
+        '-c', '--commands',
+        type=str,
+        default='commandVecs.txt',
+        help='Komutlar dosyası (default: commandVecs.txt)'
+    )
+    
+    parser.add_argument(
+        '-d', '--db',
+        type=str,
+        default='embeddings.db',
+        help='Cümleler için veritabanı adı (default: embeddings.db)'
+    )
+    
+    parser.add_argument(
+        '--db-commands',
+        type=str,
+        default='embeddingsForCommands.db',
+        help='Komutlar için veritabanı adı (default: embeddingsForCommands.db)'
+    )
+    
+    args = parser.parse_args()
+    
+    # Banner yazdır
     print("""
-╔═══════════════════════════════════════╗
+╔══════════════════════════════════════╗
 ║     EMBEDDING OLUŞTURUCU (2 DOSYA)    ║
 ║     AKTİVASYON FONKSİYONLU SÜRÜM      ║
-╚═══════════════════════════════════════╝
+║  + PARAMETRE TİPLEME SİSTEMİ ✓       ║
+╚══════════════════════════════════════╝
 """)
-
-
-
-
-
-    # Aktivasyon fonksiyonunu kontrol et
-    available_activations = ["sigmoid", "tanh", "relu", "leaky_relu", "elu", "softplus", "linear"]
     
-    if len(sys.argv) > 1:
-        activation_type = sys.argv[1].lower()
-        if activation_type not in available_activations:
-            print(f"[ERROR] Geçersiz aktivasyon fonksiyonu: {activation_type}")
-            print(f"[INFO] Mevcut seçenekler: {', '.join(available_activations)}")
-            activation_type = input("Aktivasyon fonksiyonu seçin [sigmoid]: ").strip().lower() or "sigmoid"
-    else:
-        print(f"[INFO] Mevcut aktivasyon fonksiyonları: {', '.join(available_activations)}")
-        activation_type = input("Aktivasyon fonksiyonu seçin [sigmoid]: ").strip().lower() or "sigmoid"
-    
-    print(f"\n[INFO] Seçilen aktivasyon: {activation_type}\n")
+    print(f"[AYARLAR]")
+    print(f"  Aktivasyon: {args.activation}")
+    print(f"  Learning Rate: {args.lr}")
+    print(f"  Epochs: {args.epochs}")
+    print(f"  Tokenizer: {args.tokenizer}")
+    if args.tokenizer == 'subword':
+        print(f"  Subword N: {args.subword_n}")
+    print(f"  Cümleler: {args.sentences}")
+    print(f"  Komutlar: {args.commands}")
+    print(f"  DB (Cümleler): {args.db}")
+    print(f"  DB (Komutlar): {args.db_commands}")
+    print()
 
-    # Dosya adlarını al
-    sentences_file = input("Cümleler dosyası [sentences.txt]: ").strip() or "sentences.txt"
-    commands_file = input("Komutlar dosyası [commandVecs.txt]: ").strip() or "commandVecs.txt"
-    db_file = input("Veritabanı adı [embeddings.db]: ").strip() or "embeddings.db"
-    db_file_commands = input("Komutlar için veritabanı adı [embeddingsForCommands.db]: ").strip() or "embeddingsForCommands.db"
+    # Global değişkenleri güncelle (eğer kodda LR ve EPOCHS global kullanılıyorsa)
+    LR = args.lr
+    EPOCHS = args.epochs
 
     # Dosyaları yükle
-    print(f"\n[INFO] Dosyalar okunuyor...")
-    sentences = load_file(sentences_file)
-    commands = load_file(commands_file)
+    print(f"[INFO] Dosyalar okunuyor...")
+    sentences = load_file(args.sentences)
+    commands = load_file(args.commands, " <end>")
 
     if sentences is None or commands is None:
         print("\n[ERROR] Dosyalar yüklenemedi!")
         print("\nÖrnek dosya formatları:")
-        print(f"\n{sentences_file}:")
+        print(f"\n{args.sentences}:")
         print("  terminal aç")
         print("  dosya listele")
         print("  klasör oluştur")
-        print(f"\n{commands_file}:")
+        print(f"\n{args.commands}:")
         print("  bash")
         print("  ls")
         print("  mkdir")
         exit(1)
 
-    if not sentences:
-        print(f"[ERROR] '{sentences_file}' boş!")
+    if not sentences or not commands:
+        print("[ERROR] Dosyalar boş!")
         exit(1)
-
-    if not commands:
-        print(f"[ERROR] '{commands_file}' boş!")
-        exit(1)
-
-    # Tüm cümleleri birleştir
-    all_lines = sentences + commands
-
 
     print(f"✓ {len(sentences)} cümle")
     print(f"✓ {len(commands)} komut")
-    print(f"✓ Toplam {len(all_lines)} satır\n")
+    print(f"✓ Toplam {len(sentences) + len(commands)} satır\n")
 
-    # Model oluştur ve eğit
-    sentence_model = SimpleWord2Vec(activation_type)
-    command_model = SimpleWord2Vec(activation_type)
+
+    if args.tokenizer == TokenizerMode.BPE:
+        tokenizer = bpe.ByteBPETokenizer(vocab_size=2000)
+
+        with open(args.sentences, "r", encoding="utf-8") as f:
+            lines = [l.strip() for l in f if l.strip()]
+
+        words = [word for line in lines for word in line.split()]
+
+        vocab_size = tokenizer.train(words)
+        print(f"Training vocab size: {vocab_size}")
+
+
+
+        tokenizer.save("embeddings.json")
+        tokenizer.load("embeddings.json")
+
+
+        for i in ["dizini","dizine","ghkgkfgyı","dizinine","çık"]:
+            print("-"*10)
+            text = i
+            ids = tokenizer.encode(text)
+            decoded = tokenizer.decode(ids)
+
+            print("Input   :", text)
+            print("IDs     :", ids)
+            print("Decoded :", decoded)
+
+        
+        
+        exit(0)
+
+
+    # Model oluştur
+    sentence_model = SimpleWord2Vec(
+        args.activation,
+        is_command_model=False,
+        tokenizer_mode=args.tokenizer,
+        subword_n=args.subword_n
+    )
+
+    command_model = SimpleWord2Vec(
+        args.activation,
+        is_command_model=True,
+        tokenizer_mode=TokenizerMode.WORD,
+        subword_n=args.subword_n
+    )
 
     print("[TRAIN] Eğitim başlıyor...\n")
 
     for i, line in enumerate(sentences, 1):
         tokens = sentence_model.add_sentence(line)
         sentence_model.train_sentence(tokens)
-
         vec = sentence_model.sentence_embedding(line)
 
         bar = "█" * int(i / len(sentences) * 30)
         bar = bar.ljust(30, "-")
-
-        # Hangi dosyadan olduğunu göster
-        source = "CMD" 
-        print(f"\r[{bar}] {i}/{len(sentences)} [{source}] | Vec[0]={vec[0]:.4f}", end="")
+        print(f"\r[{bar}] {i}/{len(sentences)} [WORD] | Vec[0]={vec[0]:.4f}", end="")
     
-    # -------- KOMUTLAR --------
-    print("\n[TRAIN] Komut embedding eğitimi...\n")
+    print("\n[TRAIN] Komut embedding eğitimi (parametre tipleme aktif)...\n")
 
     for i, line in enumerate(commands, 1):
         tokens = command_model.add_sentence(line)
         command_model.train_sentence(tokens)
-
         vec = command_model.sentence_embedding(line)
 
         bar = "█" * int(i / len(commands) * 30)
-
         bar = bar.ljust(30, "-")
-
-        # Hangi dosyadan olduğunu göster
-        source = "CMD" 
-        print(f"\r[{bar}] {i}/{len(commands)} [{source}] | Vec[0]={vec[0]:.4f}", end="")
+        print(f"\r[{bar}] {i}/{len(commands)} [CMD] | Vec[0]={vec[0]:.4f}", end="")
 
     # Tüm vektörleri normalize et
     sentence_model.normalize_all_embeddings()
     command_model.normalize_all_embeddings()
 
-
     # Veritabanına kaydet
-    save_sqlite(sentence_model, db_file)
-    save_sqlite(command_model, db_file_commands)
+    save_sqlite(sentence_model, args.db)
+    save_sqlite(command_model, args.db_commands)
 
-    print(f"\n\n✓ Eğitim tamamlandı → {db_file}")
-    print(f"✓ Toplam {len(sentence_model.vocab)} kelime öğrenildi")
-    
+    print(f"\n\n✓ Eğitim tamamlandı → {args.db}")
+    print(f"✓ Cümle kelime sayısı: {len(sentence_model.vocab)}")
+    print(f"✓ Komut token sayısı: {len(command_model.vocab)}")
     
     print("\n[CHECK] Cümle Embeddings")
-    check_database(db_file)
+    check_database(args.db)
 
-    print("\n[CHECK] Komut Embeddings")
-    check_database(db_file_commands)
+    print("\n[CHECK] Komut Embeddings (Tip Placeholderları)")
+    check_database(args.db_commands)
 
-    # Özet bilgi
     print("\n" + "="*50)
     print("ÖZET:")
     print(f"  Aktivasyon fonksiyonu: {sentence_model.activation_type}")
@@ -394,7 +572,12 @@ if __name__ == "__main__":
     print(f"  Cümleler: {len(sentences)}")
     print(f"  Komutlar: {len(commands)}")
     print(f"  Cümle kelime sayısı: {len(sentence_model.vocab)}")
-    print(f"  Komut kelime sayısı: {len(command_model.vocab)}")
-
-    print(f"  Veritabanı: {db_file}")
+    print(f"  Komut token sayısı: {len(command_model.vocab)}")
+    print(f"  Veritabanı: {args.db}")
+    print(f"  Veritabanı: {args.db_commands}")
+    print("\n[ÖNEMLİ] Inference sırasında:")
+    print("  1. Kullanıcı girdisini normalize edin (mkdir test → mkdir <DIR>)")
+    print("  2. Embedding ile karşılaştırın")
+    print("  3. En iyi komutu bulun")
+    print("  4. Gerçek parametreleri geri enjekte edin")
     print("="*50)

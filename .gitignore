@@ -11,3 +11,5 @@ Veriler/
 Helpers/.venv
 
 LLM/Embeddings/*.txt
+
+ByteBPE/build/_deps

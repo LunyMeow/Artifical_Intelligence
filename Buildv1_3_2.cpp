@@ -46,6 +46,37 @@ void log_saver(const string &message, string log_file = "network_changes.log")
     }
 }
 
+/* =========================
+   TOKENIZER
+========================= */
+enum class TokenizerMode
+{
+    WORD,   // mevcut (default)
+    SUBWORD // char n-gram
+};
+
+struct SetupConfig
+{
+    string modelName;
+    string modelFile;
+    string csvFile;
+    double targetError;
+    int maxEpoch;
+    vector<int> layers;
+    bool csvAvailable;
+    TokenizerMode mode;
+};
+
+enum class RunMode
+{
+    CLI,
+    SERVICE // web / api / arka plan
+};
+
+bool debugLog = true;
+
+TokenizerMode mode = TokenizerMode::SUBWORD;
+
 class CorticalColumn
 {
 public:
@@ -62,6 +93,8 @@ public:
 
         double learningRate = 0.01;
         int modelChangedSelf = 0;
+
+        TokenizerMode mode;
 
         unordered_map<string, vector<float>> wordEmbeddings;
         unordered_map<string, vector<float>> commandEmbeddings;
@@ -2276,18 +2309,57 @@ unordered_map<string, vector<float>> load_embeddings_sqlite(
 }
 #endif
 
-/* =========================
-   TOKENIZER
-========================= */
-vector<string> tokenize(const string &sentence)
+vector<string> tokenize(
+    const string &sentence,
+    TokenizerMode mode = mode,
+    int subword_n = 3)
 {
     vector<string> tokens;
-    stringstream ss(sentence);
-    string word;
-    while (ss >> word)
+
+    if (mode == TokenizerMode::WORD)
     {
-        tokens.push_back(word);
+        size_t i = 0, n = sentence.size();
+
+        // tahmini kapasite (opsiyonel ama faydalı)
+        tokens.reserve(n / 5);
+
+        while (i < n)
+        {
+            while (i < n && sentence[i] == ' ')
+                i++;
+            size_t start = i;
+            while (i < n && sentence[i] != ' ')
+                i++;
+            if (start < i)
+                tokens.emplace_back(sentence.substr(start, i - start));
+        }
+        return tokens;
     }
+
+    /* =========================
+       SUBWORD TOKENIZER
+       (char n-gram)
+    ========================= */
+    if (mode == TokenizerMode::SUBWORD)
+    {
+        for (size_t i = 0; i + subword_n <= sentence.size(); i++)
+        {
+            // boşluk içeren n-gram’leri atla
+            bool valid = true;
+            for (int j = 0; j < subword_n; j++)
+            {
+                if (sentence[i + j] == ' ')
+                {
+                    valid = false;
+                    break;
+                }
+            }
+            if (valid)
+                tokens.emplace_back(sentence.substr(i, subword_n));
+        }
+        return tokens;
+    }
+
     return tokens;
 }
 
@@ -2296,10 +2368,29 @@ vector<string> tokenize(const string &sentence)
 ========================= */
 vector<float> sentence_embedding(
     const string &sentence,
-    unordered_map<string, vector<float>> &emb)
+    unordered_map<string, vector<float>> &emb,
+    TokenizerMode mode = mode,
+    int subword_n = 3)
 {
     vector<float> result(EMB_SIZE, 0.0f);
-    auto tokens = tokenize(sentence);
+    auto tokens = tokenize(sentence, mode, subword_n);
+
+    if (debugLog)
+    {
+
+        if (mode == TokenizerMode::WORD)
+        {
+            cout << "[Sentence Embedding] Mode : " << "WORD \n";
+        }
+        else if (mode == TokenizerMode::SUBWORD)
+            cout << "[Sentence Embedding] Mode : " << "SUBWORD \n";
+        cout << "[Sentence Embedding] ayrılmış tokenler:";
+        for (auto i : tokens)
+        {
+            cout << i << ",";
+        }
+        cout << "\n";
+    }
 
     int count = 0;
     for (auto &w : tokens)
@@ -2309,9 +2400,8 @@ vector<float> sentence_embedding(
             continue;
 
         for (int i = 0; i < EMB_SIZE; i++)
-        {
             result[i] += it->second[i];
-        }
+
         count++;
     }
 
@@ -2384,7 +2474,7 @@ string generateText(
     int maxWords = 20)
 {
     // Prompt'u embedding'e çevir
-    auto promptEmb = sentence_embedding(prompt, embeddings);
+    auto promptEmb = sentence_embedding(prompt, embeddings, mode);
     auto input = floatToDouble(promptEmb);
 
     string generatedText = prompt;
@@ -2599,6 +2689,7 @@ struct InteractiveState
     int outputSize;
     double targetError;
     int maxEpoch;
+    TokenizerMode mode;
 
     unordered_map<string, vector<float>> embeddings;
     unordered_map<string, vector<float>> embeddingsForCommands;
@@ -2674,8 +2765,19 @@ void cmdGenerate(InteractiveState &state, const string &sentence)
         return;
     }
 
-    auto emb = sentence_embedding(sentence, state.cc->models[state.modelKey]
-                                                .wordEmbeddings);
+    if (debugLog)
+    {
+        if (state.cc->models[state.modelKey].mode == TokenizerMode::WORD)
+        {
+            cout << "[cmdGenerate] Mode: WORD\n";
+        }
+        else if (state.cc->models[state.modelKey].mode == TokenizerMode::SUBWORD)
+        {
+            cout << "[cmdGenerate] Mode: SUBWORD\n";
+        }
+    }
+
+    auto emb = sentence_embedding(sentence, state.cc->models[state.modelKey].wordEmbeddings, state.cc->models[state.modelKey].mode);
 
     auto input = floatToDouble(emb);
 
@@ -2690,22 +2792,22 @@ void cmdGenerate(InteractiveState &state, const string &sentence)
     cout << "Tahmin: " << cmd << "\n\n";
 }
 
-void generateForWasmTest(CorticalColumn &cc , const string &sentence , string modelKey){
+void generateForWasmTest(CorticalColumn &cc, const string &sentence, string modelKey)
+{
     if (sentence.empty())
     {
         cout << "[ERROR] generate <cumle>\n";
         return;
     }
 
-    auto emb = sentence_embedding(sentence,cc.models[modelKey]
-                                                .wordEmbeddings);
+    auto emb = sentence_embedding(sentence, cc.models[modelKey].wordEmbeddings, cc.models[modelKey].mode);
 
     auto input = floatToDouble(emb);
 
-    auto output =cc.forward(modelKey, input);
+    auto output = cc.forward(modelKey, input);
     auto outFloat = doubleToFloat(output);
 
-    string cmd = findClosestWord(outFloat,cc.models[modelKey]
+    string cmd = findClosestWord(outFloat, cc.models[modelKey]
                                                .commandEmbeddings);
 
     cout << "\n[KOMUT TAHMİNİ]\n";
@@ -2772,7 +2874,6 @@ static vector<string> split(const string &s)
         tokens.push_back(tok);
     return tokens;
 }
-
 
 void interactiveTraining(InteractiveState &state, const string &line)
 {
@@ -2858,29 +2959,12 @@ void interactiveTraining(InteractiveState &state, const string &line)
     }
 }
 
-struct SetupConfig
-{
-    string modelName;
-    string modelFile;
-    string csvFile;
-    double targetError;
-    int maxEpoch;
-    vector<int> layers;
-    bool csvAvailable;
-};
-
-enum class RunMode
-{
-    CLI,
-    SERVICE // web / api / arka plan
-};
-
-SetupConfig setup(RunMode mode, string modelName = "command_model", string csvFile = "command_data.csv")
+SetupConfig setup(RunMode runMode, string modelName = "command_model", string csvFile = "command_data.csv")
 {
     SetupConfig config;
     srand(time(nullptr));
 
-    if (mode == RunMode::CLI)
+    if (runMode == RunMode::CLI)
     {
         cout << "\n========================================\n";
         cout << "  KOMUT TAHMİN SİSTEMİ - NEURAL MODEL\n";
@@ -2891,16 +2975,28 @@ SetupConfig setup(RunMode mode, string modelName = "command_model", string csvFi
         if (config.modelName.empty())
             config.modelName = "command_model";
 
-        cout << "Eğitim veri dosyası [command_data.csv]: ";
+        cout << "Model Tokenizer Modu [WORD / SUBWORD]:";
+        string cmdMode;
+
+        getline(cin, cmdMode);
+        if (cmdMode.empty())
+            config.mode = TokenizerMode::WORD;
+        else if (cmdMode == "SUBWORD")
+            config.mode = TokenizerMode::SUBWORD;
+        else
+            config.mode = TokenizerMode::WORD;
+
+        cout << "Eğitim veri dosyası [LLM/Embeddings/command_data.csv]: ";
         getline(cin, config.csvFile);
         if (config.csvFile.empty())
-            config.csvFile = "command_data.csv";
+            config.csvFile = "LLM/Embeddings/command_data.csv";
     }
     else
     {
         // 🔒 SERVICE MODE → HER ŞEY DEFAULT
         config.modelName = modelName;
         config.csvFile = csvFile;
+        config.mode = TokenizerMode::WORD;
     }
 
     config.modelFile = config.modelName + ".bin";
@@ -2910,7 +3006,7 @@ SetupConfig setup(RunMode mode, string modelName = "command_model", string csvFi
     config.maxEpoch = 10000;
     config.layers = {50, 256, 128, 50};
 
-    if (mode == RunMode::CLI)
+    if (runMode == RunMode::CLI)
     {
         cout << "\n========================================\n";
         cout << "AYARLAR:\n";
@@ -2919,6 +3015,11 @@ SetupConfig setup(RunMode mode, string modelName = "command_model", string csvFi
         cout << "  CSV dosyası: " << config.csvFile << "\n";
         cout << "  Hedef hata: " << config.targetError << "\n";
         cout << "  Max epoch: " << config.maxEpoch << "\n";
+        if (config.mode == TokenizerMode::WORD)
+            cout << "  Tokenizer Mod: " << "WORD" << "\n";
+        else if (config.mode == TokenizerMode::SUBWORD)
+            cout << "  Tokenizer Mod: " << "SUBWORD" << "\n";
+
         cout << "========================================\n\n";
     }
 
@@ -2987,7 +3088,7 @@ const char *run_inference(const char *input)
         return result.c_str();
     }
 
-    auto emb = sentence_embedding(input, g_state.embeddings);
+    auto emb = sentence_embedding(input, g_state.embeddings, mode);
     auto out = g_cc.forward("user", floatToDouble(emb));
     auto cmd = findClosestWord(
         doubleToFloat(out),
@@ -3001,27 +3102,27 @@ const char *run_inference(const char *input)
 int main(int argc, char *argv[]) // 🆕 Parametreleri ekledik
 {
 
-    RunMode mode = RunMode::CLI;
+    RunMode runMode = RunMode::CLI;
 
     // WASM test modu
     if (argc > 1 && string(argv[1]) == "--wasm-test")
     {
         cout << "[TEST MODE] WASM\n";
-        mode = RunMode::SERVICE;
+        runMode = RunMode::SERVICE;
 
         // Manuel olarak embeddings yükle ve test et
         SetupConfig config;
         if (argc == 2)
         {
-            config = setup(mode);
+            config = setup(runMode);
         }
         else if (argc == 3)
         {
-            config = setup(mode, argv[2]);
+            config = setup(runMode, argv[2]);
         }
         else if (argc == 4)
         {
-            config = setup(mode, argv[2], argv[3]);
+            config = setup(runMode, argv[2], argv[3]);
         }
         CorticalColumn cc;
         cc.addModel(config.modelName, config.layers, "tanh");
@@ -3046,7 +3147,7 @@ int main(int argc, char *argv[]) // 🆕 Parametreleri ekledik
                 cout << "[TEST] Forward pass OK (output size: "
                      << output.size() << ")\n";
 
-                     generateForWasmTest(cc,"merhaba",config.modelName);
+                generateForWasmTest(cc, "merhaba", config.modelName);
             }
         }
         else
@@ -3054,13 +3155,12 @@ int main(int argc, char *argv[]) // 🆕 Parametreleri ekledik
             cout << "[ERROR] Model yuklenemedi!\n";
         }
 
-
         return 0;
     }
     // CLI çalıştırmak istersen:
     // RunMode mode = RunMode::CLI;
 
-    SetupConfig config = setup(mode);
+    SetupConfig config = setup(runMode);
 
     CorticalColumn cc;
 
@@ -3082,19 +3182,21 @@ int main(int argc, char *argv[]) // 🆕 Parametreleri ekledik
     state.outputSize = config.layers.back();
     state.targetError = config.targetError;
     state.maxEpoch = config.maxEpoch;
+    state.mode = config.mode;
 
     loadEmbeddingsDB(state);
 
     // ✅ 2. EMBEDDINGS'LERİ MODEL'E AKTAR
     cc.models[config.modelName].wordEmbeddings = state.embeddings;
     cc.models[config.modelName].commandEmbeddings = state.embeddingsForCommands;
+    cc.models[config.modelName].mode = state.mode;
 
     cout << "[INFO] Embeddings modele aktarildi:\n";
     cout << "  Words: " << cc.models[config.modelName].wordEmbeddings.size() << "\n";
     cout << "  Commands: " << cc.models[config.modelName].commandEmbeddings.size() << "\n";
 
     // 🔴 SERVICE MODE → while yok
-    if (mode == RunMode::SERVICE)
+    if (runMode == RunMode::SERVICE)
     {
         cout << "[INFO] Model servis modunda hazir.\n";
         return 0;

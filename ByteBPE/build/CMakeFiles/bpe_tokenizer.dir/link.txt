@@ -1,0 +1,2 @@
+/usr/bin/ar qc libbpe_tokenizer.a CMakeFiles/bpe_tokenizer.dir/ByteBPETokenizer.cpp.o
+/usr/bin/ranlib libbpe_tokenizer.a

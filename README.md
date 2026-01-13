@@ -1,5 +1,9 @@
 🧠 Adaptive Neural Cortex AI
 
+demo : https://artifical-intelligence.onrender.com/
+
+user: admin pass : admin1234
+
 
 Görsel: Dinamik olarak yeniden yapılandırılan bir nöral ağın temsili.
 
