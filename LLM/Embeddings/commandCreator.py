@@ -1,9 +1,10 @@
-# CSV oluşturucu - createEmbeddings.py ile tam uyumlu
+# CSV oluşturucu - createEmbeddings.py ile tam uyumlu (BPE desteği eklenmiş)
 import sqlite3
 import csv
 import re
 import argparse
 from helpers import helpers as hp
+import bytebpe as bpe
 import random
 import time
 
@@ -50,20 +51,59 @@ def normalize_vector(vec, min_val, max_val):
 # TOKENIZER
 # =========================
 def tokenize(
-    self,
     sentence,
+    is_command=False,
     mode=TokenizerMode.WORD,
-    subword_n=3
+    subword_n=3,
+    bpe_tokenizer=None
 ):
+    """
+    createEmbeddings.py'deki tokenize metoduyla aynı
+    """
     sentence = sentence.lower()
+
+    # =========================
+    # BPE TOKENIZER
+    # =========================
+    if mode == TokenizerMode.BPE:
+        if not bpe_tokenizer:
+            raise ValueError("BPE tokenizer verilmedi ancak BPE modu seçildi")
+        
+        tokens = []
+        words = sentence.split()
+        
+        # Komut modeli ise normalize et
+        if is_command:
+            words = hp.normalize_command_params(words)
+        
+        for w in words:
+            # Özel token kontrolü
+            if w.startswith("<") and w.endswith(">"):
+                tokens.append(w)
+                continue
+            
+            # BPE encode
+            try:
+                ids = bpe_tokenizer.encode(w)
+                for token_id in ids:
+                    # ID'den token string'e dönüştür
+                    if token_id in bpe_tokenizer.id_to_token:
+                        token_bytes = bpe_tokenizer.id_to_token[token_id]
+                        token_str = token_bytes.decode("utf-8", errors="ignore")
+                        tokens.append(token_str)
+            except Exception as e:
+                print(f"[WARNING] BPE encode hatası '{w}': {e}")
+                tokens.append(w)
+        
+        return tokens
 
     # =========================
     # WORD TOKENIZER
     # =========================
-    if mode == TokenizerMode.WORD or mode == TokenizerMode.BPE:
+    if mode == TokenizerMode.WORD:
         tokens = sentence.split()
 
-        if self.is_command_model:
+        if is_command:
             tokens = hp.normalize_command_params(tokens)
 
         return tokens
@@ -78,7 +118,7 @@ def tokenize(
         words = sentence.split()
 
         # Komut modeli ise normalize et
-        if self.is_command_model:
+        if is_command:
             words = hp.normalize_command_params(words)
 
         for w in words:
@@ -101,9 +141,9 @@ def tokenize(
     return []
 
 # =========================
-# EMBEDDING YÜKLEYICI (Activation info ile)
+# EMBEDDING YÜKLEYİCİ (Activation info ile)
 # =========================
-def load_embeddings_sqlite(db_path="embeddings.db" , tokenizer_modeA = TokenizerMode.WORD):
+def load_embeddings_sqlite(db_path="embeddings.db"):
     conn = sqlite3.connect(db_path)
     cur = conn.cursor()
     
@@ -116,7 +156,7 @@ def load_embeddings_sqlite(db_path="embeddings.db" , tokenizer_modeA = Tokenizer
         print("\n[ÇÖZÜM] Önce embeddings oluşturun:")
         print("  python3 createEmbeddings.py")
         conn.close()
-        return {}, None, None, None, None
+        return {}, None, None, None
     
     embeddings = {}
     activation_type = None
@@ -157,7 +197,7 @@ def load_embeddings_sqlite(db_path="embeddings.db" , tokenizer_modeA = Tokenizer
         print(f"[ERROR] SQL hatası: {e}")
     
     conn.close()
-    return embeddings, activation_type, act_min, act_max, tokenizer_modeA
+    return embeddings, activation_type, act_min, act_max
 
 # =========================
 # SENTENCE EMBEDDING (createEmbeddings.py ile aynı)
@@ -169,7 +209,8 @@ def sentence_embedding(
     act_max,
     is_command=False,
     tokenizer_mode=TokenizerMode.WORD,
-    subword_n=3
+    subword_n=3,
+    bpe_tokenizer=None
 ):
     """
     createEmbeddings.py'deki sentence_embedding metoduyla aynı mantık
@@ -180,14 +221,16 @@ def sentence_embedding(
         act_min: Aktivasyon fonksiyonu minimum değeri
         act_max: Aktivasyon fonksiyonu maksimum değeri
         is_command: True ise parametre normalizasyonu uygula
-        tokenizer_mode: TokenizerMode.WORD veya TokenizerMode.SUBWORD
+        tokenizer_mode: TokenizerMode.WORD, SUBWORD veya BPE
         subword_n: Subword n-gram değeri
+        bpe_tokenizer: BPE tokenizer objesi (sadece BPE modunda)
     """
     tokens = tokenize(
         sentence,
         is_command=is_command,
         mode=tokenizer_mode,
-        subword_n=subword_n
+        subword_n=subword_n,
+        bpe_tokenizer=bpe_tokenizer
     )
     
     vec = [0.0] * EMB_SIZE
@@ -218,15 +261,17 @@ def create_command_dataset(
     sentence_db="embeddings.db",
     command_db="embeddingsForCommands.db",
     output_file="command_data.csv",
-    tokenizer_mode = TokenizerMode.WORD,
-    shuffle_data = False
+    sentence_tokenizer_mode=TokenizerMode.WORD,
+    command_tokenizer_mode=TokenizerMode.WORD,
+    subword_n=3,
+    bpe_model_path=None,
+    shuffle_data=False
 ):
     print("\n[INFO] Sentence embeddings yükleniyor...")
-    sentence_embeddings, sent_act, sent_min, sent_max, sent_mode = load_embeddings_sqlite(sentence_db,tokenizer_mode)
-    print("[DEBUG] sent_mode :",sent_mode)
+    sentence_embeddings, sent_act, sent_min, sent_max = load_embeddings_sqlite(sentence_db)
 
     print("[INFO] Command embeddings yükleniyor...")
-    command_embeddings, cmd_act, cmd_min, cmd_max, cmd_mode = load_embeddings_sqlite(command_db)
+    command_embeddings, cmd_act, cmd_min, cmd_max = load_embeddings_sqlite(command_db)
 
     if not sentence_embeddings or not command_embeddings:
         print("[ERROR] Embeddings yüklenemedi!")
@@ -236,6 +281,31 @@ def create_command_dataset(
     print(f"✓ Command token sayısı: {len(command_embeddings)}")
     print(f"✓ Sentence aktivasyon: {sent_act} [{sent_min}, {sent_max}]")
     print(f"✓ Command aktivasyon: {cmd_act} [{cmd_min}, {cmd_max}]")
+    print(f"✓ Sentence tokenizer: {sentence_tokenizer_mode}")
+    print(f"✓ Command tokenizer: {command_tokenizer_mode}")
+    
+    # BPE tokenizer yükle (gerekiyorsa)
+    sentence_bpe_tokenizer = None
+    command_bpe_tokenizer = None
+    
+    if sentence_tokenizer_mode == TokenizerMode.BPE:
+        if not bpe_model_path:
+            print("[ERROR] BPE modu seçildi ama --bpe-model belirtilmedi!")
+            return
+        
+        print(f"\n[BPE] Sentence tokenizer yükleniyor: {bpe_model_path}")
+        sentence_bpe_tokenizer = bpe.ByteBPETokenizer()
+        sentence_bpe_tokenizer.load(bpe_model_path)
+        print(f"✓ BPE vocab size: {len(sentence_bpe_tokenizer.token_to_id)}")
+    
+    if command_tokenizer_mode == TokenizerMode.BPE:
+        if not bpe_model_path:
+            print("[ERROR] Command BPE modu seçildi ama --bpe-model belirtilmedi!")
+            return
+        
+        print(f"[BPE] Command tokenizer yükleniyor: {bpe_model_path}")
+        command_bpe_tokenizer = bpe.ByteBPETokenizer()
+        command_bpe_tokenizer.load(bpe_model_path)
     
     # Placeholder token'ları kontrol et
     placeholders = ["<DIR>", "<FILE>", "<PATH>", "<NUMBER>", "<IP>", "<URL>", "<VAR>", "<end>"]
@@ -243,7 +313,7 @@ def create_command_dataset(
     if found_placeholders:
         print(f"✓ Özel tokenler bulundu: {', '.join(found_placeholders)}\n")
     else:
-        print("[UYARI] Hiç özel token bulunmadı. createEmbeddings.py çalıştırıldı mı?\n")
+        print("[UYARI] Hiç özel token bulunamadı. createEmbeddings.py çalıştırıldı mı?\n")
 
     # Dosyaları oku
     try:
@@ -252,7 +322,7 @@ def create_command_dataset(
         
         with open(commands_file, "r", encoding="utf-8") as f:
             # <end> ekliyoruz çünkü createEmbeddings.py de ekliyor
-            commands = [line.strip() + " <end>" for line in f if line.strip()]
+            commands = [line.strip() + "" for line in f if line.strip()]
 
     except FileNotFoundError as e:
         print(f"[ERROR] {e}")
@@ -285,7 +355,9 @@ def create_command_dataset(
                 sent_min,
                 sent_max,
                 is_command=False,
-                tokenizer_mode=sent_mode
+                tokenizer_mode=sentence_tokenizer_mode,
+                subword_n=subword_n,
+                bpe_tokenizer=sentence_bpe_tokenizer
             )
             
             # Command: parametre normalizasyonlu embedding
@@ -295,7 +367,9 @@ def create_command_dataset(
                 cmd_min,
                 cmd_max,
                 is_command=True,
-                tokenizer_mode=TokenizerMode.WORD  # Komutlar her zaman WORD mode
+                tokenizer_mode=command_tokenizer_mode,
+                subword_n=subword_n,
+                bpe_tokenizer=command_bpe_tokenizer
             )
 
             # Vektör kontrolü
@@ -312,10 +386,7 @@ def create_command_dataset(
                 skipped += 1
                 continue
 
-            #writer.writerow(input_vec + target_vec)
             dataset_rows.append(input_vec + target_vec)
-
-
             processed += 1
 
             # Progress bar
@@ -323,11 +394,14 @@ def create_command_dataset(
                 bar = "█" * int(i / len(sentences) * 30)
                 bar = bar.ljust(30, "-")
                 print(f"\r[{bar}] {i}/{len(sentences)} | OK:{processed} SKIP:{skipped}", end="")
-        print("\n[Debug] len dataset_row before shuffle : ",len(dataset_rows))
+
+        print(f"\n[INFO] Dataset satır sayısı (shuffle öncesi): {len(dataset_rows)}")
 
         if shuffle_data:
+            print("[INFO] Dataset karıştırılıyor...")
             random.shuffle(dataset_rows)
-        print("\n[Debug] len dataset_row : ",len(dataset_rows))
+        
+        print(f"[INFO] CSV'ye yazılıyor...")
         for row in dataset_rows:
             writer.writerow(row)
 
@@ -343,13 +417,15 @@ def create_command_dataset(
 # =========================
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="Komut Tahmin Dataseti Oluşturucu - createEmbeddings.py ile tam uyumlu",
+        description="Komut Tahmin Dataseti Oluşturucu - createEmbeddings.py ile tam uyumlu (BPE destekli)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Örnekler:
   %(prog)s
   %(prog)s -s sentences.txt -c commandVecs.txt -o output.csv
   %(prog)s --sentence-db myemb.db --command-db mycmd.db
+  %(prog)s --sentence-tokenizer bpe --bpe-model bpe_tokenizer.json
+  %(prog)s --sentence-tokenizer subword --subword-n 4
 
 DOSYA FORMATI:
 
@@ -370,6 +446,7 @@ NOT:
    rm file.txt        →  rm <FILE> <end>
 3. sentences.txt ve commandVecs.txt AYNI SATIR SAYISINDA olmalı
 4. Aktivasyon fonksiyonu ve normalizasyon otomatik DB'den alınır
+5. BPE modu kullanıyorsanız --bpe-model parametresini belirtin
         """
     )
     
@@ -409,14 +486,38 @@ NOT:
     )
 
     parser.add_argument(
-        '--tokenizer-mode',
+        '--sentence-tokenizer',
         type=str,
-        default=TokenizerMode.WORD,
-        help='Tokenizer modu (default: word)'
+        default='word',
+        choices=['word', 'subword', 'bpe'],
+        help='Sentence tokenizer modu (default: word)'
     )
+    
+    parser.add_argument(
+        '--command-tokenizer',
+        type=str,
+        default='word',
+        choices=['word', 'subword', 'bpe'],
+        help='Command tokenizer modu (default: word)'
+    )
+    
+    parser.add_argument(
+        '--subword-n',
+        type=int,
+        default=3,
+        help='Subword n-gram değeri (default: 3)'
+    )
+    
+    parser.add_argument(
+        '--bpe-model',
+        type=str,
+        default=None,
+        help='BPE model dosya yolu (BPE modu için gerekli)'
+    )
+    
     parser.add_argument(
         '--shuffle',
-        default=False,
+        action='store_true',
         help='Dataset satırlarını CSV yazılmadan önce karıştır'
     )
 
@@ -426,8 +527,9 @@ NOT:
     print("""
 ╔═══════════════════════════════════════╗
 ║   KOMUT TAHMİN DATASETİ OLUŞTURUCU   ║
-║  + PARAMETRE TİPLEME DESTEĞİ ✓       ║
-║  + AKTİVASYON NORMALİZASYONU ✓       ║
+║  + PARAMETRE TİPLEME DESTEĞİ ✔       ║
+║  + AKTİVASYON NORMALİZASYONU ✔       ║
+║  + BPE TOKENIZER DESTEĞİ ✔           ║
 ╚═══════════════════════════════════════╝
 """)
     
@@ -437,8 +539,13 @@ NOT:
     print(f"  Çıktı: {args.output}")
     print(f"  Sentence DB: {args.sentence_db}")
     print(f"  Command DB: {args.command_db}")
-    print(f"  Tokenizer Mode: {args.tokenizer_mode}")
-    print(f"  Shuffle Mode: {args.shuffle == "True"}")
+    print(f"  Sentence Tokenizer: {args.sentence_tokenizer}")
+    print(f"  Command Tokenizer: {args.command_tokenizer}")
+    if args.sentence_tokenizer == 'subword' or args.command_tokenizer == 'subword':
+        print(f"  Subword N: {args.subword_n}")
+    if args.sentence_tokenizer == 'bpe' or args.command_tokenizer == 'bpe':
+        print(f"  BPE Model: {args.bpe_model}")
+    print(f"  Shuffle Mode: {args.shuffle}")
 
     
     create_command_dataset(
@@ -447,8 +554,9 @@ NOT:
         args.sentence_db,
         args.command_db,
         args.output,
-        args.tokenizer_mode,
-        args.shuffle == "True"
+        args.sentence_tokenizer,
+        args.command_tokenizer,
+        args.subword_n,
+        args.bpe_model,
+        args.shuffle
     )
-
-#shuffle modu hatalı

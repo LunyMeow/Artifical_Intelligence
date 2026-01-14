@@ -50,7 +50,7 @@ The system is implemented in **C++** for high performance and includes both nati
 
 ```
 Artifical_Intelligence/
-├── Buildv1_3_2.cpp          # Main neural network implementation
+├── Buildv[latest].cpp          # Main neural network implementation
 ├── LLM/
 │   └── Embeddings/
 │       ├── command_data.csv      # Command training dataset
@@ -106,7 +106,7 @@ struct Network {
 sudo apt-get install libsqlite3-dev
 
 # Compile
-g++ -std=c++17 -O3 Buildv1_3_2.cpp -lsqlite3 -o neural_cortex
+g++ -o build Buildv1_3_2.cpp ByteBPE/ByteBPETokenizer.cpp -std=c++17 -lsqlite3 -I./include
 
 # Run interactive mode
 ./neural_cortex
@@ -123,11 +123,23 @@ cd emsdk
 source ./emsdk_env.sh
 
 # Compile to WASM
-emcc Buildv1_3_2.cpp \
+emcc \
+  Buildv1_3_2.cpp \
+  ByteBPE/ByteBPETokenizer.cpp \
+  -O3 \
+  -std=c++17 \
   -s WASM=1 \
-  -s EXPORTED_FUNCTIONS='["_load_user_model","_run_inference"]' \
-  -s EXPORTED_RUNTIME_METHODS='["ccall","cwrap"]' \
-  -o neural_cortex.js
+  -s MODULARIZE=1 \
+  -s EXPORT_ES6=1 \
+  -s EXPORT_NAME=createModule \
+  -s EXPORTED_FUNCTIONS="['_load_user_model','_run_inference']" \
+  -s EXPORTED_RUNTIME_METHODS="['FS','ccall','cwrap']" \
+  -s ASSERTIONS=2 \
+  -s SAFE_HEAP=1 \
+  -s STACK_OVERFLOW_CHECK=2 \
+  -o web/model.js \
+  -I./include
+
 
 # Test WASM build
 ./neural_cortex --wasm-test

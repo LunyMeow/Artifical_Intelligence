@@ -97,7 +97,8 @@ class SimpleWord2Vec:
         activation_type="sigmoid",
         is_command_model=False,
         tokenizer_mode=TokenizerMode.WORD,
-        subword_n=3
+        subword_n=3,
+        bpe_tokenizer=None
     ):
         self.vocab = {}
         self.W_in = {}
@@ -107,24 +108,62 @@ class SimpleWord2Vec:
         self.is_command_model = is_command_model
         self.tokenizer_mode = tokenizer_mode
         self.subword_n = subword_n
+        self.bpe_tokenizer = bpe_tokenizer
         self.act_min, self.act_max, self.activation = get_activation_info(activation_type) 
         self.activation_type = activation_type
-
-#Bu fonksiyonun aynısını commandCreator fonksiyonu için de yap veya ortak kullan zaten ikisi aynı amaca hizmet ediyor
-#ne
 
     def tokenize(
         self,
         sentence,
-        mode=TokenizerMode.WORD,
-        subword_n=3
+        mode=None,
+        subword_n=None
     ):
+        if mode is None:
+            mode = self.tokenizer_mode
+        if subword_n is None:
+            subword_n = self.subword_n
+            
         sentence = sentence.lower()
+    
+        # =========================
+        # BPE TOKENIZER
+        # =========================
+        if mode == TokenizerMode.BPE:
+            if not self.bpe_tokenizer:
+                raise ValueError("BPE tokenizer verilmedi ancak BPE modu seçildi")
+            
+            tokens = []
+            words = sentence.split()
+            
+            # Komut modeli ise normalize et
+            if self.is_command_model:
+                words = hp.normalize_command_params(words)
+            
+            for w in words:
+                # Özel token kontrolü
+                if w.startswith("<") and w.endswith(">"):
+                    tokens.append(w)
+                    continue
+                
+                # BPE encode
+                try:
+                    ids = self.bpe_tokenizer.encode(w)
+                    for token_id in ids:
+                        # ID'den token string'e dönüştür
+                        if token_id in self.bpe_tokenizer.id_to_token:
+                            token_bytes = self.bpe_tokenizer.id_to_token[token_id]
+                            token_str = token_bytes.decode("utf-8", errors="ignore")
+                            tokens.append(token_str)
+                except Exception as e:
+                    print(f"[WARNING] BPE encode hatası '{w}': {e}")
+                    tokens.append(w)
+            
+            return tokens
     
         # =========================
         # WORD TOKENIZER
         # =========================
-        if mode == TokenizerMode.WORD or mode == TokenizerMode.BPE:
+        if mode == TokenizerMode.WORD:
             tokens = sentence.split()
     
             if self.is_command_model:
@@ -166,12 +205,7 @@ class SimpleWord2Vec:
 
 
     def add_sentence(self, sentence):
-        tokens = self.tokenize(
-        sentence,
-        mode=self.tokenizer_mode,
-        subword_n=self.subword_n
-    )
-
+        tokens = self.tokenize(sentence)
 
         for w in tokens:
             if w not in self.vocab:
@@ -231,11 +265,7 @@ class SimpleWord2Vec:
                             vneg[k] += grad * tmp
 
     def sentence_embedding(self, sentence):
-        tokens = self.tokenize(
-        sentence,
-        mode=self.tokenizer_mode,
-        subword_n=self.subword_n
-    )
+        tokens = self.tokenize(sentence)
 
         vec = [0.0] * EMB_SIZE
         cnt = 0
@@ -343,6 +373,7 @@ if __name__ == "__main__":
   %(prog)s --activation relu --lr 0.15 --epochs 150
   %(prog)s -a tanh -l 0.2 -e 200 --tokenizer subword --subword-n 4
   %(prog)s --sentences data/sentences.txt --commands data/commands.txt
+  %(prog)s --tokenizer bpe --bpe-vocab 2000
   %(prog)s --help
 
 Mevcut Aktivasyon Fonksiyonları:
@@ -394,6 +425,20 @@ Not: Komutlardaki parametreler otomatik olarak tip placeholderlarına dönüşt�
         help='Subword n-gram değeri (default: 3)'
     )
     
+    parser.add_argument(
+        '--bpe-vocab',
+        type=int,
+        default=2000,
+        help='BPE vocab boyutu (default: 2000)'
+    )
+    
+    parser.add_argument(
+        '--bpe-model',
+        type=str,
+        default='bpe_tokenizer.json',
+        help='BPE model dosya adı (default: bpe_tokenizer.json)'
+    )
+    
     # Dosya yolları
     parser.add_argument(
         '-s', '--sentences',
@@ -422,16 +467,25 @@ Not: Komutlardaki parametreler otomatik olarak tip placeholderlarına dönüşt�
         default='embeddingsForCommands.db',
         help='Komutlar için veritabanı adı (default: embeddingsForCommands.db)'
     )
+
+    parser.add_argument(
+        '--ctokenizer',
+        type=str,
+        default='False',
+        help='Komutlar için cümleler ile aynı tokenizeri kullan'
+    )
+
     
     args = parser.parse_args()
     
     # Banner yazdır
     print("""
-╔══════════════════════════════════════╗
+╔═══════════════════════════════════╗
 ║     EMBEDDING OLUŞTURUCU (2 DOSYA)    ║
 ║     AKTİVASYON FONKSİYONLU SÜRÜM      ║
-║  + PARAMETRE TİPLEME SİSTEMİ ✓       ║
-╚══════════════════════════════════════╝
+║  + PARAMETRE TİPLEME SİSTEMİ ✔       ║
+║  + BPE TOKENIZER DESTEĞİ ✔           ║
+╚═══════════════════════════════════╝
 """)
     
     print(f"[AYARLAR]")
@@ -441,20 +495,25 @@ Not: Komutlardaki parametreler otomatik olarak tip placeholderlarına dönüşt�
     print(f"  Tokenizer: {args.tokenizer}")
     if args.tokenizer == 'subword':
         print(f"  Subword N: {args.subword_n}")
+    if args.tokenizer == 'bpe':
+        print(f"  BPE Vocab: {args.bpe_vocab}")
+        print(f"  BPE Model: {args.bpe_model}")
     print(f"  Cümleler: {args.sentences}")
     print(f"  Komutlar: {args.commands}")
     print(f"  DB (Cümleler): {args.db}")
     print(f"  DB (Komutlar): {args.db_commands}")
+    print(f"  ctokenizer   : {args.ctokenizer}")
+
     print()
 
-    # Global değişkenleri güncelle (eğer kodda LR ve EPOCHS global kullanılıyorsa)
+    # Global değişkenleri güncelle
     LR = args.lr
     EPOCHS = args.epochs
 
     # Dosyaları yükle
     print(f"[INFO] Dosyalar okunuyor...")
     sentences = load_file(args.sentences)
-    commands = load_file(args.commands, " <end>")
+    commands = load_file(args.commands, "")
 
     if sentences is None or commands is None:
         print("\n[ERROR] Dosyalar yüklenemedi!")
@@ -477,64 +536,71 @@ Not: Komutlardaki parametreler otomatik olarak tip placeholderlarına dönüşt�
     print(f"✓ {len(commands)} komut")
     print(f"✓ Toplam {len(sentences) + len(commands)} satır\n")
 
-
+    # BPE Tokenizer hazırlığı
+    tokenizer = None
     if args.tokenizer == TokenizerMode.BPE:
-        tokenizer = bpe.ByteBPETokenizer(vocab_size=2000)
+        print(f"[BPE] Tokenizer oluşturuluyor (vocab_size={args.bpe_vocab})...")
+        tokenizer = bpe.ByteBPETokenizer(vocab_size=args.bpe_vocab)
 
+        # Tüm metni topla
         with open(args.sentences, "r", encoding="utf-8") as f:
             lines = [l.strip() for l in f if l.strip()]
 
         words = [word for line in lines for word in line.split()]
 
         vocab_size = tokenizer.train(words)
-        print(f"Training vocab size: {vocab_size}")
+        print(f"[BPE] Training vocab size: {vocab_size}")
 
-
-
-        tokenizer.save("embeddings.json")
-        tokenizer.load("embeddings.json")
-
-
-        for i in ["dizini","dizine","ghkgkfgyı","dizinine","çık"]:
-            print("-"*10)
-            text = i
-            ids = tokenizer.encode(text)
-            decoded = tokenizer.decode(ids)
-
-            print("Input   :", text)
-            print("IDs     :", ids)
-            print("Decoded :", decoded)
-
+        tokenizer.save(args.bpe_model)
+        print(f"[BPE] Tokenizer kaydedildi: {args.bpe_model}")
         
-        
-        exit(0)
-
+        # Test
+        print("\n[BPE] Test encoding:")
+        for test_word in ["dizini", "dizine", "dizinine", "çık"][:3]:
+            try:
+                ids = tokenizer.encode(test_word)
+                decoded = tokenizer.decode(ids)
+                print(f"  '{test_word}' → {ids} → '{decoded}'")
+            except:
+                pass
+        print()
 
     # Model oluştur
+    print("[MODEL] Embedding modelleri oluşturuluyor...\n")
+    
     sentence_model = SimpleWord2Vec(
         args.activation,
         is_command_model=False,
         tokenizer_mode=args.tokenizer,
-        subword_n=args.subword_n
+        subword_n=args.subword_n,
+        bpe_tokenizer=tokenizer
     )
 
     command_model = SimpleWord2Vec(
         args.activation,
         is_command_model=True,
         tokenizer_mode=TokenizerMode.WORD,
-        subword_n=args.subword_n
+        subword_n=args.subword_n,
+        bpe_tokenizer=None if args.ctokenizer == "False" else tokenizer # Komutlar için BPE kullanmıyoruz
     )
 
     print("[TRAIN] Eğitim başlıyor...\n")
 
     for i, line in enumerate(sentences, 1):
         tokens = sentence_model.add_sentence(line)
+        
+        # DEBUG: İlk 3 cümlenin token'larını göster
+        if i <= 3:
+            print(f"\n[DEBUG] Cümle {i}: '{line}'")
+            print(f"[DEBUG] Token'lar: {tokens[:10]}...")  # İlk 10 token
+        
         sentence_model.train_sentence(tokens)
         vec = sentence_model.sentence_embedding(line)
 
         bar = "█" * int(i / len(sentences) * 30)
         bar = bar.ljust(30, "-")
-        print(f"\r[{bar}] {i}/{len(sentences)} [WORD] | Vec[0]={vec[0]:.4f}", end="")
+        mode_label = "BPE" if args.tokenizer == "bpe" else args.tokenizer.upper()
+        print(f"\r[{bar}] {i}/{len(sentences)} [{mode_label}] | Vec[0]={vec[0]:.4f}", end="")
     
     print("\n[TRAIN] Komut embedding eğitimi (parametre tipleme aktif)...\n")
 
@@ -546,6 +612,7 @@ Not: Komutlardaki parametreler otomatik olarak tip placeholderlarına dönüşt�
         bar = "█" * int(i / len(commands) * 30)
         bar = bar.ljust(30, "-")
         print(f"\r[{bar}] {i}/{len(commands)} [CMD] | Vec[0]={vec[0]:.4f}", end="")
+    print()
 
     # Tüm vektörleri normalize et
     sentence_model.normalize_all_embeddings()
@@ -569,9 +636,13 @@ Not: Komutlardaki parametreler otomatik olarak tip placeholderlarına dönüşt�
     print("ÖZET:")
     print(f"  Aktivasyon fonksiyonu: {sentence_model.activation_type}")
     print(f"  Çıktı aralığı: [{sentence_model.act_min}, {sentence_model.act_max}]")
+    print(f"  Tokenizer: {args.tokenizer}")
+    if args.tokenizer == 'bpe':
+        print(f"  BPE vocab: {args.bpe_vocab}")
+        print(f"  BPE model: {args.bpe_model}")
     print(f"  Cümleler: {len(sentences)}")
     print(f"  Komutlar: {len(commands)}")
-    print(f"  Cümle kelime sayısı: {len(sentence_model.vocab)}")
+    print(f"  Cümle token sayısı: {len(sentence_model.vocab)}")
     print(f"  Komut token sayısı: {len(command_model.vocab)}")
     print(f"  Veritabanı: {args.db}")
     print(f"  Veritabanı: {args.db_commands}")
@@ -580,4 +651,6 @@ Not: Komutlardaki parametreler otomatik olarak tip placeholderlarına dönüşt�
     print("  2. Embedding ile karşılaştırın")
     print("  3. En iyi komutu bulun")
     print("  4. Gerçek parametreleri geri enjekte edin")
+    if args.tokenizer == 'bpe':
+        print(f"  5. BPE tokenizer'ı {args.bpe_model} dosyasından yükleyin")
     print("="*50)

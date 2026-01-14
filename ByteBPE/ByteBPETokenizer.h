@@ -12,6 +12,8 @@ public:
     using ByteSeq = std::vector<uint8_t>;
     using BytePair = std::pair<ByteSeq, ByteSeq>;
     
+    bool debugLog = true; // Debug modunu kontrol eden değişken
+    
     ByteBPETokenizer(int vocab_size = 16000);
     
     // Training
@@ -24,7 +26,6 @@ public:
     // Save/Load
     void save(const std::string& path);
     void load(const std::string& path);
-    
 private:
     int vocab_size_;
     std::map<ByteSeq, int> token_to_id_;

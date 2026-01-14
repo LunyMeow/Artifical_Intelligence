@@ -20,6 +20,8 @@
 #define LOG(...) cout
 #endif
 
+#include "ByteBPE/ByteBPETokenizer.h"
+
 using namespace std;
 
 bool debug = true;
@@ -51,8 +53,9 @@ void log_saver(const string &message, string log_file = "network_changes.log")
 ========================= */
 enum class TokenizerMode
 {
-    WORD,   // mevcut (default)
-    SUBWORD // char n-gram
+    WORD,    // mevcut (default)
+    SUBWORD, // char n-gram
+    BPE
 };
 
 struct SetupConfig
@@ -74,8 +77,9 @@ enum class RunMode
 };
 
 bool debugLog = true;
+string bpe_model_path = "LLM/Embeddings/bpe_tokenizer.json"; // Düzelteceğin zaman Network yapısının içinde de bu sabit var onu da değiştir
 
-TokenizerMode mode = TokenizerMode::SUBWORD;
+TokenizerMode mode = TokenizerMode::BPE;
 
 class CorticalColumn
 {
@@ -95,6 +99,7 @@ public:
         int modelChangedSelf = 0;
 
         TokenizerMode mode;
+        ByteBPETokenizer *bpe_tokenizer = nullptr; // ← EKLE
 
         unordered_map<string, vector<float>> wordEmbeddings;
         unordered_map<string, vector<float>> commandEmbeddings;
@@ -1498,6 +1503,16 @@ public:
                 file.write(reinterpret_cast<const char *>(vec.data()), vecSize * sizeof(float));
             }
 
+            bool hasBPE = (bpe_tokenizer != nullptr);
+            file.write(reinterpret_cast<const char *>(&hasBPE), sizeof(hasBPE));
+            if (hasBPE)
+            {
+                // BPE model dosya yolunu kaydet
+                size_t pathLen = bpe_model_path.length();
+                file.write(reinterpret_cast<const char *>(&pathLen), sizeof(pathLen));
+                file.write(bpe_model_path.c_str(), pathLen);
+            }
+
             file.close();
             if (debug)
                 cout << "[INFO] Model + embeddings basariyla kaydedildi: " << filename << endl;
@@ -1638,6 +1653,27 @@ public:
             layerInputs.clear();
             layerOutputs.clear();
 
+            bool hasBPE;
+            file.read(reinterpret_cast<char *>(&hasBPE), sizeof(hasBPE));
+
+            if (hasBPE)
+            {
+                uint64_t pathLen;
+                file.read(reinterpret_cast<char *>(&pathLen), sizeof(pathLen));
+                string bpe_model_path(pathLen, ' ');
+                file.read(&bpe_model_path[0], pathLen);
+
+                // BPE tokenizer'ı yükle
+                if (bpe_tokenizer != nullptr)
+                {
+                    delete bpe_tokenizer;
+                }
+                bpe_tokenizer = new ByteBPETokenizer();
+                bpe_tokenizer->load(bpe_model_path);
+
+                cout << "[loadFromFile] [INFO]  BPE tokenizer yuklendi: " << bpe_model_path << endl;
+            }
+
             file.close();
             if (debug)
                 cout << "[INFO] Model + embeddings basariyla yuklendi: " << filename
@@ -1645,6 +1681,15 @@ public:
                      << ", Commands: " << commandEmbeddings.size() << ")" << endl;
 
             return true;
+        }
+
+        ~Network()
+        {
+            if (bpe_tokenizer != nullptr)
+            {
+                delete bpe_tokenizer;
+                bpe_tokenizer = nullptr;
+            }
         }
 
     private:
@@ -2311,8 +2356,10 @@ unordered_map<string, vector<float>> load_embeddings_sqlite(
 
 vector<string> tokenize(
     const string &sentence,
-    TokenizerMode mode = mode,
-    int subword_n = 3)
+    TokenizerMode mode = TokenizerMode::BPE,
+    int subword_n = 3,
+    ByteBPETokenizer *bpe_tokenizer = nullptr // ← EKLE
+)
 {
     vector<string> tokens;
 
@@ -2360,6 +2407,56 @@ vector<string> tokenize(
         return tokens;
     }
 
+    /* =========================
+   BPE TOKENIZER
+========================= */
+    if (mode == TokenizerMode::BPE)
+    {
+        if (!bpe_tokenizer)
+        {
+            cerr << "[ERROR] BPE tokenizer verilmedi!\n";
+            return tokens;
+        }
+
+        // Kelimelere ayır
+        vector<string> words;
+        size_t i = 0, n = sentence.size();
+        while (i < n)
+        {
+            while (i < n && sentence[i] == ' ')
+                i++;
+            size_t start = i;
+            while (i < n && sentence[i] != ' ')
+                i++;
+            if (start < i)
+                words.push_back(sentence.substr(start, i - start));
+        }
+
+        // Her kelimeyi BPE ile encode et
+        for (const auto &word : words)
+        {
+            // Özel token kontrolü
+            if (word.size() > 2 && word[0] == '<' && word[word.size() - 1] == '>')
+            {
+                tokens.push_back(word);
+                continue;
+            }
+
+            // Encode da hata var .:::::::
+            //  BPE encode
+            auto ids = bpe_tokenizer->encode(word);
+
+            // IDs'i token string'lerine dönüştür
+            for (int id : ids)
+            {
+                auto decoded = bpe_tokenizer->decode({id});
+                tokens.push_back(decoded);
+            }
+        }
+
+        return tokens;
+    }
+
     return tokens;
 }
 
@@ -2369,11 +2466,33 @@ vector<string> tokenize(
 vector<float> sentence_embedding(
     const string &sentence,
     unordered_map<string, vector<float>> &emb,
-    TokenizerMode mode = mode,
-    int subword_n = 3)
+    TokenizerMode mode = TokenizerMode::BPE,
+    int subword_n = 3,
+    ByteBPETokenizer *bpe_tokenizer = nullptr // ← EKLE
+)
 {
     vector<float> result(EMB_SIZE, 0.0f);
-    auto tokens = tokenize(sentence, mode, subword_n);
+    if (debugLog)
+    {
+        if (mode == TokenizerMode::BPE)
+        {
+            cout << "[sentence_embedding] mode: BPE";
+        }
+        else if (mode == TokenizerMode::SUBWORD)
+        {
+            cout << "\n[sentence_embedding] mode subword\n";
+        }
+        else if (mode == TokenizerMode::WORD)
+        {
+            cout << "\n[sentence_embedding] mode subword\n";
+        }
+        else
+        {
+            cout << "\n[sentence_embedding] mode unknown\n";
+        }
+    }
+
+    auto tokens = tokenize(sentence, mode, subword_n, bpe_tokenizer); // ← GÜNCELLE
 
     if (debugLog)
     {
@@ -2384,6 +2503,8 @@ vector<float> sentence_embedding(
         }
         else if (mode == TokenizerMode::SUBWORD)
             cout << "[Sentence Embedding] Mode : " << "SUBWORD \n";
+        else if (mode == TokenizerMode::BPE)
+            cout << "[Sentence Embedding] Mode : " << "BPE \n";
         cout << "[Sentence Embedding] ayrılmış tokenler:";
         for (auto i : tokens)
         {
@@ -2474,7 +2595,7 @@ string generateText(
     int maxWords = 20)
 {
     // Prompt'u embedding'e çevir
-    auto promptEmb = sentence_embedding(prompt, embeddings, mode);
+    auto promptEmb = sentence_embedding(prompt, embeddings, mode, 3, cc.models[modelKey].bpe_tokenizer);
     auto input = floatToDouble(promptEmb);
 
     string generatedText = prompt;
@@ -2775,13 +2896,50 @@ void cmdGenerate(InteractiveState &state, const string &sentence)
         {
             cout << "[cmdGenerate] Mode: SUBWORD\n";
         }
+        else if (state.cc->models[state.modelKey].mode == TokenizerMode::BPE)
+        {
+            cout << "[cmdGenerate] Mode: BPE\n";
+        }
+    }
+    // ✅ DOĞRU KONTROL
+    if (state.cc->models[state.modelKey].bpe_tokenizer == nullptr)
+    {
+        cout << "[cmdGenerate] [ERROR] modelin bpe tokenizeri nullptr\n";
+        return; // ❗ Buradan çık
     }
 
-    auto emb = sentence_embedding(sentence, state.cc->models[state.modelKey].wordEmbeddings, state.cc->models[state.modelKey].mode);
+    auto emb = sentence_embedding(
+        sentence,
+        state.cc->models[state.modelKey].wordEmbeddings,
+        state.cc->models[state.modelKey].mode,
+        3,                                             // subword_n
+        state.cc->models[state.modelKey].bpe_tokenizer // ← EKLE
+    );
 
     auto input = floatToDouble(emb);
 
     auto output = state.cc->forward(state.modelKey, input);
+
+    if (debugLog)
+    {
+
+        if (!output.empty())
+        {
+            double sum = 0.0;
+            for (double v : output)
+                sum += v;
+
+            double mean = sum / output.size();
+
+            cout << "[cmdGenerate] Output size: " << output.size() << endl;
+            cout << "[cmdGenerate] Output mean: " << mean << endl;
+        }
+        else
+        {
+            cout << "[cmdGenerate] Output vector is empty" << endl;
+        }
+    }
+
     auto outFloat = doubleToFloat(output);
 
     string cmd = findClosestWord(outFloat, state.cc->models[state.modelKey]
@@ -2800,7 +2958,7 @@ void generateForWasmTest(CorticalColumn &cc, const string &sentence, string mode
         return;
     }
 
-    auto emb = sentence_embedding(sentence, cc.models[modelKey].wordEmbeddings, cc.models[modelKey].mode);
+    auto emb = sentence_embedding(sentence, cc.models[modelKey].wordEmbeddings, cc.models[modelKey].mode, 3, cc.models[modelKey].bpe_tokenizer);
 
     auto input = floatToDouble(emb);
 
@@ -2975,16 +3133,27 @@ SetupConfig setup(RunMode runMode, string modelName = "command_model", string cs
         if (config.modelName.empty())
             config.modelName = "command_model";
 
-        cout << "Model Tokenizer Modu [WORD / SUBWORD]:";
+        cout << "Model Tokenizer Modu [WORD / SUBWORD / BPE (default)]:";
         string cmdMode;
 
         getline(cin, cmdMode);
         if (cmdMode.empty())
-            config.mode = TokenizerMode::WORD;
+            config.mode = TokenizerMode::BPE;
         else if (cmdMode == "SUBWORD")
             config.mode = TokenizerMode::SUBWORD;
-        else
+        else if (cmdMode == "WORD") // ← EKLE
             config.mode = TokenizerMode::WORD;
+        else
+            config.mode = TokenizerMode::BPE;
+
+        if (config.mode == TokenizerMode::BPE)
+        {
+            cout << "BPE json dosya yolunu giriniz (default:"<<bpe_model_path<<"):";
+            cmdMode = "";
+            getline(cin, cmdMode);
+            if (!cmdMode.empty())
+                bpe_model_path = cmdMode;
+        }
 
         cout << "Eğitim veri dosyası [LLM/Embeddings/command_data.csv]: ";
         getline(cin, config.csvFile);
@@ -2996,7 +3165,7 @@ SetupConfig setup(RunMode runMode, string modelName = "command_model", string cs
         // 🔒 SERVICE MODE → HER ŞEY DEFAULT
         config.modelName = modelName;
         config.csvFile = csvFile;
-        config.mode = TokenizerMode::WORD;
+        config.mode = TokenizerMode::BPE;
     }
 
     config.modelFile = config.modelName + ".bin";
@@ -3019,6 +3188,8 @@ SetupConfig setup(RunMode runMode, string modelName = "command_model", string cs
             cout << "  Tokenizer Mod: " << "WORD" << "\n";
         else if (config.mode == TokenizerMode::SUBWORD)
             cout << "  Tokenizer Mod: " << "SUBWORD" << "\n";
+        else if (config.mode == TokenizerMode::BPE)
+            cout << "  Tokenizer Mod: " << "BPE" << "\n";
 
         cout << "========================================\n\n";
     }
@@ -3067,6 +3238,24 @@ int load_user_model(const char *bin, const char *meta)
     g_state.embeddings = g_cc.models[g_state.modelKey].wordEmbeddings;
     g_state.embeddingsForCommands = g_cc.models[g_state.modelKey].commandEmbeddings;
 
+    if (g_state.mode == TokenizerMode::BPE)
+    {
+
+        if (ifstream(bin).good())
+        {
+            g_cc.models[g_state.modelKey].bpe_tokenizer = new ByteBPETokenizer();
+            g_cc.models[g_state.modelKey].bpe_tokenizer->load(bin);
+            if (debugLog)
+                cout << "[INFO] BPE tokenizer yuklendi: " << bin << "\n";
+        }
+        else
+        {
+            if (debugLog)
+                cerr << "[ERROR] BPE model bulunamadi: " << bin << "\n";
+            return 1;
+        }
+    }
+
     modelLoaded = true;
     return 1;
 }
@@ -3088,7 +3277,7 @@ const char *run_inference(const char *input)
         return result.c_str();
     }
 
-    auto emb = sentence_embedding(input, g_state.embeddings, mode);
+    auto emb = sentence_embedding(input, g_state.embeddings, mode, 3, g_state.cc->models[g_state.modelKey].bpe_tokenizer);
     auto out = g_cc.forward("user", floatToDouble(emb));
     auto cmd = findClosestWord(
         doubleToFloat(out),
@@ -3109,6 +3298,11 @@ int main(int argc, char *argv[]) // 🆕 Parametreleri ekledik
     {
         cout << "[TEST MODE] WASM\n";
         runMode = RunMode::SERVICE;
+        bpe_model_path = "web/user_0000/command_model.json";
+        if (debugLog)
+        {
+            cout << "[main] BPE model dosyası " << bpe_model_path << " olarak değiştirildi.\n";
+        }
 
         // Manuel olarak embeddings yükle ve test et
         SetupConfig config;
@@ -3124,6 +3318,7 @@ int main(int argc, char *argv[]) // 🆕 Parametreleri ekledik
         {
             config = setup(runMode, argv[2], argv[3]);
         }
+
         CorticalColumn cc;
         cc.addModel(config.modelName, config.layers, "tanh");
 
@@ -3147,16 +3342,21 @@ int main(int argc, char *argv[]) // 🆕 Parametreleri ekledik
                 cout << "[TEST] Forward pass OK (output size: "
                      << output.size() << ")\n";
 
-                generateForWasmTest(cc, "merhaba", config.modelName);
+                generateForWasmTest(cc, "dosya kopyala", config.modelName);
             }
         }
         else
         {
             cout << "[ERROR] Model yuklenemedi!\n";
         }
+        if (debugLog)
+        {
+            cout << "[main] BPE model dosyası " << bpe_model_path << " .\n";
+        }
 
         return 0;
     }
+
     // CLI çalıştırmak istersen:
     // RunMode mode = RunMode::CLI;
 
@@ -3169,9 +3369,47 @@ int main(int argc, char *argv[]) // 🆕 Parametreleri ekledik
         config.layers,
         "tanh");
 
+    // ✅ BPE TOKENIZER YÜKLE (eğer BPE modu seçildiyse)
+
+    if (config.mode == TokenizerMode::BPE)
+    {
+
+        if (ifstream(bpe_model_path).good())
+        {
+            cc.models[config.modelName].bpe_tokenizer = new ByteBPETokenizer();
+            cc.models[config.modelName].bpe_tokenizer->load(bpe_model_path);
+            cout << "[INFO] BPE tokenizer yuklendi: " << bpe_model_path << "\n";
+        }
+        else
+        {
+            cerr << "[ERROR] BPE model bulunamadi: " << bpe_model_path << "\n";
+            return 1;
+        }
+    }
+
     if (ifstream(config.modelFile).good())
     {
         cc.loadModel(config.modelFile, config.modelName);
+        cc.models[config.modelName].mode = config.mode;
+
+        cout << "[DEBUG] hazır model yüklendi.\n";
+
+        // ✅ 2. BPE tokenizer'ı kontrol et
+        if (cc.models[config.modelName].bpe_tokenizer == nullptr && config.mode == TokenizerMode::BPE)
+        {
+            cc.models[config.modelName].bpe_tokenizer = new ByteBPETokenizer();
+            cc.models[config.modelName].bpe_tokenizer->load(bpe_model_path);
+            cout << "[main] [INFO] BPE tokenizer yeniden yuklendi\n";
+        }
+    }
+    else
+    {
+        // Yeni model oluşturuluyorsa BPE'yi yükle
+        if (config.mode == TokenizerMode::BPE)
+        {
+            cc.models[config.modelName].bpe_tokenizer = new ByteBPETokenizer();
+            cc.models[config.modelName].bpe_tokenizer->load(bpe_model_path);
+        }
     }
 
     InteractiveState state;
@@ -3192,7 +3430,7 @@ int main(int argc, char *argv[]) // 🆕 Parametreleri ekledik
     cc.models[config.modelName].mode = state.mode;
 
     cout << "[INFO] Embeddings modele aktarildi:\n";
-    cout << "  Words: " << cc.models[config.modelName].wordEmbeddings.size() << "\n";
+    cout << "  Words   : " << cc.models[config.modelName].wordEmbeddings.size() << "\n";
     cout << "  Commands: " << cc.models[config.modelName].commandEmbeddings.size() << "\n";
 
     // 🔴 SERVICE MODE → while yok

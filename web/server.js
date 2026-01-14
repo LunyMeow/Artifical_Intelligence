@@ -172,7 +172,7 @@ app.use("/wasm", express.static(path.join(__dirname, "public", "wasm"), {
 // 🔒 MODEL DOSYALARI - KULLANICI BAZLI + Güvenli
 app.get("/model/:file", auth, modelLimiter, async (req, res) => {
     try {
-        const allowed = ["command_model.bin", "command_model.meta"];
+        const allowed = ["command_model.bin", "command_model.meta","bpe_tokenizer.json"];
         const safePath = path.basename(req.params.file); // Path traversal koruması
 
         if (!allowed.includes(safePath)) {
