@@ -142,7 +142,7 @@ emcc \
 
 
 # Test WASM build
-./neural_cortex --wasm-test
+./build --wasm-test
 ```
 
 ---

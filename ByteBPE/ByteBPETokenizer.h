@@ -25,7 +25,13 @@ public:
     
     // Save/Load
     void save(const std::string& path);
-    void load(const std::string& path);
+    bool load(const std::string& path);
+    
+    // Public getters for embeddings
+    const std::map<int, ByteSeq>& get_id_to_token() const {
+        return id_to_token_;
+    }
+    
 private:
     int vocab_size_;
     std::map<ByteSeq, int> token_to_id_;

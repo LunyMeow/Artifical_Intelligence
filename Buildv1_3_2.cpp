@@ -8,6 +8,7 @@
 #include <ctime>
 #include <cstdlib>
 #include <chrono> // <--- ekle
+#include <memory>
 
 #include <sstream>
 #include <algorithm>
@@ -99,10 +100,24 @@ public:
         int modelChangedSelf = 0;
 
         TokenizerMode mode;
-        ByteBPETokenizer *bpe_tokenizer = nullptr; // ← EKLE
+        unique_ptr<ByteBPETokenizer> bpe_tokenizer;
+
 
         unordered_map<string, vector<float>> wordEmbeddings;
         unordered_map<string, vector<float>> commandEmbeddings;
+
+        // Default constructor
+        Network() = default;
+
+        // Move constructor
+        Network(Network &&other) noexcept = default;
+
+        // Move assignment operator
+        Network &operator=(Network &&other) noexcept = default;
+
+        // Delete copy operations
+        Network(const Network &) = delete;
+        Network &operator=(const Network &) = delete;
 
         // ===============================
         // Aktivasyon Fonksiyonları
@@ -1418,7 +1433,7 @@ public:
             return slopeOverall; // istersen slopeRecent de donebilirsin
         }
 
-        bool saveToFile(const string &filename)
+        bool saveToFile(const string &filename, const string &modelKey = "")
         {
             ofstream file(filename, ios::binary);
             if (!file.is_open())
@@ -1428,10 +1443,21 @@ public:
                 return false;
             }
 
+            // 0. Model key'ini kaydet
+            uint64_t keyLen = static_cast<uint64_t>(modelKey.length());
+            file.write(reinterpret_cast<const char *>(&keyLen), sizeof(keyLen));
+            if (keyLen > 0)
+                file.write(modelKey.c_str(), static_cast<std::streamsize>(keyLen));
+
             // 1. Aktivasyon tipini kaydet
-            size_t typeLen = activationType.length();
+            uint64_t typeLen = static_cast<uint64_t>(activationType.length());
             file.write(reinterpret_cast<const char *>(&typeLen), sizeof(typeLen));
-            file.write(activationType.c_str(), typeLen);
+            if (typeLen > 0)
+                file.write(activationType.c_str(), static_cast<std::streamsize>(typeLen));
+
+            // 1.5 TokenizerMode'u kaydet
+            int modeInt = static_cast<int>(mode);
+            file.write(reinterpret_cast<const char *>(&modeInt), sizeof(modeInt));
 
             // 2. Learning rate ve diğer parametreleri kaydet
             file.write(reinterpret_cast<const char *>(&learningRate), sizeof(learningRate));
@@ -1439,68 +1465,75 @@ public:
             file.write(reinterpret_cast<const char *>(&modelChangedSelf), sizeof(modelChangedSelf));
 
             // 3. Errors vector'ünü kaydet
-            size_t errSize = errors.size();
+            uint64_t errSize = static_cast<uint64_t>(errors.size());
             file.write(reinterpret_cast<const char *>(&errSize), sizeof(errSize));
-            file.write(reinterpret_cast<const char *>(errors.data()), errSize * sizeof(double));
+            if (errSize > 0)
+                file.write(reinterpret_cast<const char *>(errors.data()), static_cast<std::streamsize>(errSize * sizeof(double)));
 
             // 4. Weights yapısını kaydet
-            size_t numLayers = weights.size();
+            uint64_t numLayers = static_cast<uint64_t>(weights.size());
             file.write(reinterpret_cast<const char *>(&numLayers), sizeof(numLayers));
 
             for (const auto &layer : weights)
             {
-                size_t numNeurons = layer.size();
+                uint64_t numNeurons = static_cast<uint64_t>(layer.size());
                 file.write(reinterpret_cast<const char *>(&numNeurons), sizeof(numNeurons));
 
                 for (const auto &neuron : layer)
                 {
-                    size_t numWeights = neuron.size();
+                    uint64_t numWeights = static_cast<uint64_t>(neuron.size());
                     file.write(reinterpret_cast<const char *>(&numWeights), sizeof(numWeights));
-                    file.write(reinterpret_cast<const char *>(neuron.data()), numWeights * sizeof(double));
+                    if (numWeights > 0)
+                        file.write(reinterpret_cast<const char *>(neuron.data()), static_cast<std::streamsize>(numWeights * sizeof(double)));
                 }
             }
 
             // 5. Biases yapısını kaydet
-            size_t numBiasLayers = biases.size();
+            uint64_t numBiasLayers = static_cast<uint64_t>(biases.size());
             file.write(reinterpret_cast<const char *>(&numBiasLayers), sizeof(numBiasLayers));
 
             for (const auto &layer : biases)
             {
-                size_t numBiases = layer.size();
+                uint64_t numBiases = static_cast<uint64_t>(layer.size());
                 file.write(reinterpret_cast<const char *>(&numBiases), sizeof(numBiases));
-                file.write(reinterpret_cast<const char *>(layer.data()), numBiases * sizeof(double));
+                if (numBiases > 0)
+                    file.write(reinterpret_cast<const char *>(layer.data()), static_cast<std::streamsize>(numBiases * sizeof(double)));
             }
 
             // 🆕 6. WORD EMBEDDINGS KAYDET
-            size_t wordEmbSize = wordEmbeddings.size();
+            uint64_t wordEmbSize = static_cast<uint64_t>(wordEmbeddings.size());
             file.write(reinterpret_cast<const char *>(&wordEmbSize), sizeof(wordEmbSize));
 
             for (const auto &[word, vec] : wordEmbeddings)
             {
                 // Kelime uzunluğu ve kelimeyi kaydet
-                size_t wordLen = word.length();
+                uint64_t wordLen = static_cast<uint64_t>(word.length());
                 file.write(reinterpret_cast<const char *>(&wordLen), sizeof(wordLen));
-                file.write(word.c_str(), wordLen);
+                if (wordLen > 0)
+                    file.write(word.c_str(), static_cast<std::streamsize>(wordLen));
 
                 // Vector'ü kaydet
-                size_t vecSize = vec.size();
+                uint64_t vecSize = static_cast<uint64_t>(vec.size());
                 file.write(reinterpret_cast<const char *>(&vecSize), sizeof(vecSize));
-                file.write(reinterpret_cast<const char *>(vec.data()), vecSize * sizeof(float));
+                if (vecSize > 0)
+                    file.write(reinterpret_cast<const char *>(vec.data()), static_cast<std::streamsize>(vecSize * sizeof(float)));
             }
 
             // 🆕 7. COMMAND EMBEDDINGS KAYDET
-            size_t cmdEmbSize = commandEmbeddings.size();
+            uint64_t cmdEmbSize = static_cast<uint64_t>(commandEmbeddings.size());
             file.write(reinterpret_cast<const char *>(&cmdEmbSize), sizeof(cmdEmbSize));
 
             for (const auto &[cmd, vec] : commandEmbeddings)
             {
-                size_t cmdLen = cmd.length();
+                uint64_t cmdLen = static_cast<uint64_t>(cmd.length());
                 file.write(reinterpret_cast<const char *>(&cmdLen), sizeof(cmdLen));
-                file.write(cmd.c_str(), cmdLen);
+                if (cmdLen > 0)
+                    file.write(cmd.c_str(), static_cast<std::streamsize>(cmdLen));
 
-                size_t vecSize = vec.size();
+                uint64_t vecSize = static_cast<uint64_t>(vec.size());
                 file.write(reinterpret_cast<const char *>(&vecSize), sizeof(vecSize));
-                file.write(reinterpret_cast<const char *>(vec.data()), vecSize * sizeof(float));
+                if (vecSize > 0)
+                    file.write(reinterpret_cast<const char *>(vec.data()), static_cast<std::streamsize>(vecSize * sizeof(float)));
             }
 
             bool hasBPE = (bpe_tokenizer != nullptr);
@@ -1508,9 +1541,10 @@ public:
             if (hasBPE)
             {
                 // BPE model dosya yolunu kaydet
-                size_t pathLen = bpe_model_path.length();
+                uint64_t pathLen = static_cast<uint64_t>(bpe_model_path.length());
                 file.write(reinterpret_cast<const char *>(&pathLen), sizeof(pathLen));
-                file.write(bpe_model_path.c_str(), pathLen);
+                if (pathLen > 0)
+                    file.write(bpe_model_path.c_str(), static_cast<std::streamsize>(pathLen));
             }
 
             file.close();
@@ -1518,6 +1552,8 @@ public:
                 cout << "[INFO] Model + embeddings basariyla kaydedildi: " << filename << endl;
             return true;
         }
+
+        string loadedModelKey; // Yüklenen model key'ini sakla
 
         bool loadFromFile(const string &filename)
         {
@@ -1529,27 +1565,92 @@ public:
                 return false;
             }
 
+            // 0. Model key'ini oku
+            uint64_t keyLen;
+            if (!file.read(reinterpret_cast<char *>(&keyLen), sizeof(keyLen)))
+            {
+                cerr << "[ERROR] Failed to read model key length" << endl;
+                return false;
+            }
+            if (keyLen > 0)
+            {
+                loadedModelKey.resize(static_cast<size_t>(keyLen));
+                if (!file.read(&loadedModelKey[0], static_cast<std::streamsize>(keyLen)))
+                {
+                    cerr << "[ERROR] Failed to read model key" << endl;
+                    return false;
+                }
+            }
+
             // 1. Aktivasyon tipini oku
             uint64_t typeLen;
-            file.read(reinterpret_cast<char *>(&typeLen), sizeof(typeLen));
-            activationType.resize(typeLen);
-            file.read(&activationType[0], typeLen);
+            if (!file.read(reinterpret_cast<char *>(&typeLen), sizeof(typeLen)))
+            {
+                cerr << "[ERROR] Failed to read activation type length" << endl;
+                return false;
+            }
+            if (typeLen > 0)
+            {
+                activationType.resize(static_cast<size_t>(typeLen));
+                if (!file.read(&activationType[0], static_cast<std::streamsize>(typeLen)))
+                {
+                    cerr << "[ERROR] Failed to read activation type" << endl;
+                    return false;
+                }
+            }
+
+            // 1.5 TokenizerMode'u oku
+            int modeInt;
+            file.read(reinterpret_cast<char *>(&modeInt), sizeof(modeInt));
+            mode = static_cast<TokenizerMode>(modeInt);
 
             // 2. Learning rate ve diğer parametreleri oku
-            file.read(reinterpret_cast<char *>(&learningRate), sizeof(learningRate));
-            file.read(reinterpret_cast<char *>(&lrChanged), sizeof(lrChanged));
-            file.read(reinterpret_cast<char *>(&modelChangedSelf), sizeof(modelChangedSelf));
+            if (!file.read(reinterpret_cast<char *>(&learningRate), sizeof(learningRate)))
+            {
+                cerr << "[ERROR] Failed to read learningRate" << endl;
+                return false;
+            }
+            if (!file.read(reinterpret_cast<char *>(&lrChanged), sizeof(lrChanged)))
+            {
+                cerr << "[ERROR] Failed to read lrChanged" << endl;
+                return false;
+            }
+            if (!file.read(reinterpret_cast<char *>(&modelChangedSelf), sizeof(modelChangedSelf)))
+            {
+                cerr << "[ERROR] Failed to read modelChangedSelf" << endl;
+                return false;
+            }
 
             // 3. Errors vector'ünü oku
             uint64_t errSize;
-            file.read(reinterpret_cast<char *>(&errSize), sizeof(errSize));
-            errors.resize(errSize);
-            file.read(reinterpret_cast<char *>(errors.data()), errSize * sizeof(double));
+            if (!file.read(reinterpret_cast<char *>(&errSize), sizeof(errSize)))
+            {
+                cerr << "[ERROR] Failed to read errors size" << endl;
+                return false;
+            }
+            if (errSize > 0)
+            {
+                errors.resize(static_cast<size_t>(errSize));
+                if (!file.read(reinterpret_cast<char *>(errors.data()), static_cast<std::streamsize>(errSize * sizeof(double))))
+                {
+                    cerr << "[ERROR] Failed to read errors data" << endl;
+                    return false;
+                }
+            }
 
             // 4. Weights yapısını oku
             uint64_t numLayers;
-            file.read(reinterpret_cast<char *>(&numLayers), sizeof(numLayers));
-            weights.resize(numLayers);
+            if (!file.read(reinterpret_cast<char *>(&numLayers), sizeof(numLayers)))
+            {
+                cerr << "[ERROR] Failed to read numLayers" << endl;
+                return false;
+            }
+            if (numLayers > 10000)
+            {
+                cerr << "[ERROR] numLayers too large: " << numLayers << endl;
+                return false;
+            }
+            weights.resize(static_cast<size_t>(numLayers));
 
             for (auto &layer : weights)
             {
@@ -1592,59 +1693,156 @@ public:
                 }
             }
 
-            // HATA aşağı
+            
 
             // 5. Biases yapısını oku
             uint64_t numBiasLayers;
-            file.read(reinterpret_cast<char *>(&numBiasLayers), sizeof(numBiasLayers));
-            biases.resize(numBiasLayers);
+            if (!file.read(reinterpret_cast<char *>(&numBiasLayers), sizeof(numBiasLayers)))
+            {
+                cerr << "[ERROR] Failed to read numBiasLayers" << endl;
+                return false;
+            }
+            if (numBiasLayers > 10000)
+            {
+                cerr << "[ERROR] numBiasLayers too large: " << numBiasLayers << endl;
+                return false;
+            }
+            biases.resize(static_cast<size_t>(numBiasLayers));
 
             for (auto &layer : biases)
             {
                 uint64_t numBiases;
-                file.read(reinterpret_cast<char *>(&numBiases), sizeof(numBiases));
-                layer.resize(numBiases);
-                file.read(reinterpret_cast<char *>(layer.data()), numBiases * sizeof(double));
+                if (!file.read(reinterpret_cast<char *>(&numBiases), sizeof(numBiases)))
+                {
+                    cerr << "[ERROR] Failed to read numBiases" << endl;
+                    return false;
+                }
+                if (numBiases > 1000000)
+                {
+                    cerr << "[ERROR] numBiases suspicious: " << numBiases << endl;
+                    return false;
+                }
+                layer.resize(static_cast<size_t>(numBiases));
+                if (numBiases > 0)
+                {
+                    if (!file.read(reinterpret_cast<char *>(layer.data()), static_cast<std::streamsize>(numBiases * sizeof(double))))
+                    {
+                        cerr << "[ERROR] Failed to read bias data" << endl;
+                        return false;
+                    }
+                }
             }
 
             // 🆕 6. WORD EMBEDDINGS OKU
             uint64_t wordEmbSize;
-            file.read(reinterpret_cast<char *>(&wordEmbSize), sizeof(wordEmbSize));
+            if (!file.read(reinterpret_cast<char *>(&wordEmbSize), sizeof(wordEmbSize)))
+            {
+                cerr << "[ERROR] Failed to read wordEmbSize" << endl;
+                return false;
+            }
 
             wordEmbeddings.clear();
             for (uint64_t i = 0; i < wordEmbSize; i++)
             {
                 // Kelimeyi oku
                 uint64_t wordLen;
-                file.read(reinterpret_cast<char *>(&wordLen), sizeof(wordLen));
-                string word(wordLen, ' ');
-                file.read(&word[0], wordLen);
+                if (!file.read(reinterpret_cast<char *>(&wordLen), sizeof(wordLen)))
+                {
+                    cerr << "[ERROR] Failed to read wordLen" << endl;
+                    return false;
+                }
+                if (wordLen > 10000)
+                {
+                    cerr << "[ERROR] wordLen suspicious: " << wordLen << endl;
+                    return false;
+                }
+                string word(static_cast<size_t>(wordLen), ' ');
+                if (wordLen > 0)
+                {
+                    if (!file.read(&word[0], static_cast<std::streamsize>(wordLen)))
+                    {
+                        cerr << "[ERROR] Failed to read word data" << endl;
+                        return false;
+                    }
+                }
 
                 // Vector'ü oku
                 uint64_t vecSize;
-                file.read(reinterpret_cast<char *>(&vecSize), sizeof(vecSize));
-                vector<float> vec(vecSize);
-                file.read(reinterpret_cast<char *>(vec.data()), vecSize * sizeof(float));
+                if (!file.read(reinterpret_cast<char *>(&vecSize), sizeof(vecSize)))
+                {
+                    cerr << "[ERROR] Failed to read vecSize" << endl;
+                    return false;
+                }
+                if (vecSize > 1000000)
+                {
+                    cerr << "[ERROR] vecSize suspicious: " << vecSize << endl;
+                    return false;
+                }
+                vector<float> vec(static_cast<size_t>(vecSize));
+                if (vecSize > 0)
+                {
+                    if (!file.read(reinterpret_cast<char *>(vec.data()), static_cast<std::streamsize>(vecSize * sizeof(float))))
+                    {
+                        cerr << "[ERROR] Failed to read word vector data" << endl;
+                        return false;
+                    }
+                }
 
                 wordEmbeddings[word] = vec;
             }
 
             // 🆕 7. COMMAND EMBEDDINGS OKU
             uint64_t cmdEmbSize;
-            file.read(reinterpret_cast<char *>(&cmdEmbSize), sizeof(cmdEmbSize));
+            if (!file.read(reinterpret_cast<char *>(&cmdEmbSize), sizeof(cmdEmbSize)))
+            {
+                cerr << "[ERROR] Failed to read cmdEmbSize" << endl;
+                return false;
+            }
 
             commandEmbeddings.clear();
-            for (size_t i = 0; i < cmdEmbSize; i++)
+            for (uint64_t i = 0; i < cmdEmbSize; i++)
             {
                 uint64_t cmdLen;
-                file.read(reinterpret_cast<char *>(&cmdLen), sizeof(cmdLen));
-                string cmd(cmdLen, ' ');
-                file.read(&cmd[0], cmdLen);
+                if (!file.read(reinterpret_cast<char *>(&cmdLen), sizeof(cmdLen)))
+                {
+                    cerr << "[ERROR] Failed to read cmdLen" << endl;
+                    return false;
+                }
+                if (cmdLen > 10000)
+                {
+                    cerr << "[ERROR] cmdLen suspicious: " << cmdLen << endl;
+                    return false;
+                }
+                string cmd(static_cast<size_t>(cmdLen), ' ');
+                if (cmdLen > 0)
+                {
+                    if (!file.read(&cmd[0], static_cast<std::streamsize>(cmdLen)))
+                    {
+                        cerr << "[ERROR] Failed to read cmd data" << endl;
+                        return false;
+                    }
+                }
 
                 uint64_t vecSize;
-                file.read(reinterpret_cast<char *>(&vecSize), sizeof(vecSize));
-                vector<float> vec(vecSize);
-                file.read(reinterpret_cast<char *>(vec.data()), vecSize * sizeof(float));
+                if (!file.read(reinterpret_cast<char *>(&vecSize), sizeof(vecSize)))
+                {
+                    cerr << "[ERROR] Failed to read cmd vecSize" << endl;
+                    return false;
+                }
+                if (vecSize > 1000000)
+                {
+                    cerr << "[ERROR] cmd vecSize suspicious: " << vecSize << endl;
+                    return false;
+                }
+                vector<float> vec(static_cast<size_t>(vecSize));
+                if (vecSize > 0)
+                {
+                    if (!file.read(reinterpret_cast<char *>(vec.data()), static_cast<std::streamsize>(vecSize * sizeof(float))))
+                    {
+                        cerr << "[ERROR] Failed to read cmd vector data" << endl;
+                        return false;
+                    }
+                }
 
                 commandEmbeddings[cmd] = vec;
             }
@@ -1653,25 +1851,82 @@ public:
             layerInputs.clear();
             layerOutputs.clear();
 
-            bool hasBPE;
-            file.read(reinterpret_cast<char *>(&hasBPE), sizeof(hasBPE));
+            bool hasBPE = false;
+            if (!file.read(reinterpret_cast<char *>(&hasBPE), sizeof(hasBPE)))
+            {
+                cerr << "[ERROR] Failed to read hasBPE flag" << endl;
+                return false;
+            }
 
             if (hasBPE)
             {
                 uint64_t pathLen;
-                file.read(reinterpret_cast<char *>(&pathLen), sizeof(pathLen));
-                string bpe_model_path(pathLen, ' ');
-                file.read(&bpe_model_path[0], pathLen);
+                if (!file.read(reinterpret_cast<char *>(&pathLen), sizeof(pathLen)))
+                {
+                    cerr << "[ERROR] Failed to read BPE path length" << endl;
+                    return false;
+                }
+
+                if (pathLen > 20000)
+                {
+                    cerr << "[ERROR] BPE path length suspicious: " << pathLen << endl;
+                    return false;
+                }
+
+                string bpe_model_path(pathLen > 0 ? static_cast<size_t>(pathLen) : 0, ' ');
+                if (pathLen > 0)
+                {
+                    if (!file.read(&bpe_model_path[0], static_cast<std::streamsize>(pathLen)))
+                    {
+                        cerr << "[ERROR] Failed to read BPE path" << endl;
+                        return false;
+                    }
+                }
 
                 // BPE tokenizer'ı yükle
                 if (bpe_tokenizer != nullptr)
                 {
-                    delete bpe_tokenizer;
+                    bpe_tokenizer.reset();
+                    bpe_tokenizer = nullptr;
                 }
-                bpe_tokenizer = new ByteBPETokenizer();
-                bpe_tokenizer->load(bpe_model_path);
-
-                cout << "[loadFromFile] [INFO]  BPE tokenizer yuklendi: " << bpe_model_path << endl;
+                bpe_tokenizer = std::make_unique<ByteBPETokenizer>();
+                if (bpe_tokenizer != nullptr)
+                {
+                    bpe_tokenizer->debugLog = true; // Debug mesajlarını kapat
+                    bool ok = bpe_tokenizer->load(bpe_model_path);
+                    if (!ok)
+                    {
+                        cerr << "[ERROR] BPE tokenizer failed to load: " << bpe_model_path << endl;
+                        bpe_tokenizer.reset();
+                        bpe_tokenizer = nullptr;
+                        hasBPE = false;
+                    }
+                    else
+                    {
+                        // Verify tokenizer actually populated vocab
+                        try
+                        {
+                            auto &idmap = bpe_tokenizer->get_id_to_token();
+                            if (idmap.empty())
+                            {
+                                cerr << "[ERROR] BPE tokenizer loaded but vocabulary is empty" << endl;
+                                bpe_tokenizer.reset();
+                                bpe_tokenizer = nullptr;
+                                hasBPE = false;
+                            }
+                            else
+                            {
+                                cout << "[loadFromFile] [INFO]  BPE tokenizer yuklendi: " << bpe_model_path << endl;
+                            }
+                        }
+                        catch (...) {
+                            cerr << "[ERROR] Exception while validating bpe_tokenizer" << endl;
+                            bpe_tokenizer.reset();
+                            bpe_tokenizer = nullptr;
+                            hasBPE = false;
+                        }
+                    }
+                }
             }
 
             file.close();
@@ -1687,7 +1942,7 @@ public:
         {
             if (bpe_tokenizer != nullptr)
             {
-                delete bpe_tokenizer;
+                bpe_tokenizer.reset();
                 bpe_tokenizer = nullptr;
             }
         }
@@ -1720,7 +1975,7 @@ public:
             net.weights.push_back(layerWeights);
             net.biases.push_back(layerBiases);
         }
-        models[key] = net;
+        models[key] = std::move(net);
     }
 
     vector<double> forward(const string &key, const vector<double> &inputs)
@@ -1745,44 +2000,27 @@ public:
             return false;
         }
 
-        // Model dosyası adını ve key'i kaydet
-        ofstream metaFile(filename + ".meta");
-        if (metaFile.is_open())
-        {
-            metaFile << modelKey << endl;
-            metaFile.close();
-        }
-
-        return it->second.saveToFile(filename);
+        // Model key'ini binary dosyasına kaydet
+        return it->second.saveToFile(filename, modelKey);
     }
 
     // Model yükleme fonksiyonu
     bool loadModel(const string &filename, const string &newModelKey = "")
     {
-        string modelKey = newModelKey;
-
-        // Eğer key verilmemişse, meta dosyadan oku
-        if (modelKey.empty())
-        {
-            ifstream metaFile(filename + ".meta");
-            if (metaFile.is_open())
-            {
-                getline(metaFile, modelKey);
-                metaFile.close();
-            }
-            else
-            {
-                modelKey = "loaded_model";
-            }
-        }
-
         Network net;
         if (!net.loadFromFile(filename))
         {
             return false;
         }
 
-        models[modelKey] = net;
+        // Eğer key verilmemişse, dosyadan okunan key'i kullan
+        string modelKey = newModelKey.empty() ? net.loadedModelKey : newModelKey;
+        if (modelKey.empty())
+        {
+            modelKey = "loaded_model";
+        }
+
+        models[modelKey] = std::move(net);
         if (debug)
             cout << "[INFO] Model '" << modelKey << "' olarak yuklendi" << endl;
         return true;
@@ -2447,10 +2685,20 @@ vector<string> tokenize(
             auto ids = bpe_tokenizer->encode(word);
 
             // IDs'i token string'lerine dönüştür
+            if (ids.empty())
+            {
+                // Fallback: kelimenin kendisini token olarak kullan
+                tokens.push_back(word);
+                continue;
+            }
+
             for (int id : ids)
             {
                 auto decoded = bpe_tokenizer->decode({id});
-                tokens.push_back(decoded);
+                if (!decoded.empty())
+                {
+                    tokens.push_back(decoded);
+                }
             }
         }
 
@@ -2595,7 +2843,7 @@ string generateText(
     int maxWords = 20)
 {
     // Prompt'u embedding'e çevir
-    auto promptEmb = sentence_embedding(prompt, embeddings, mode, 3, cc.models[modelKey].bpe_tokenizer);
+    auto promptEmb = sentence_embedding(prompt, embeddings, mode, 3, cc.models[modelKey].bpe_tokenizer.get());
     auto input = floatToDouble(promptEmb);
 
     string generatedText = prompt;
@@ -2913,7 +3161,7 @@ void cmdGenerate(InteractiveState &state, const string &sentence)
         state.cc->models[state.modelKey].wordEmbeddings,
         state.cc->models[state.modelKey].mode,
         3,                                             // subword_n
-        state.cc->models[state.modelKey].bpe_tokenizer // ← EKLE
+        state.cc->models[state.modelKey].bpe_tokenizer.get() // ← EKLE
     );
 
     auto input = floatToDouble(emb);
@@ -2958,7 +3206,7 @@ void generateForWasmTest(CorticalColumn &cc, const string &sentence, string mode
         return;
     }
 
-    auto emb = sentence_embedding(sentence, cc.models[modelKey].wordEmbeddings, cc.models[modelKey].mode, 3, cc.models[modelKey].bpe_tokenizer);
+    auto emb = sentence_embedding(sentence, cc.models[modelKey].wordEmbeddings, cc.models[modelKey].mode, 3, cc.models[modelKey].bpe_tokenizer.get());
 
     auto input = floatToDouble(emb);
 
@@ -3243,7 +3491,7 @@ int load_user_model(const char *bin, const char *meta)
 
         if (ifstream(bin).good())
         {
-            g_cc.models[g_state.modelKey].bpe_tokenizer = new ByteBPETokenizer();
+            g_cc.models[g_state.modelKey].bpe_tokenizer = std::make_unique<ByteBPETokenizer>();
             g_cc.models[g_state.modelKey].bpe_tokenizer->load(bin);
             if (debugLog)
                 cout << "[INFO] BPE tokenizer yuklendi: " << bin << "\n";
@@ -3277,7 +3525,7 @@ const char *run_inference(const char *input)
         return result.c_str();
     }
 
-    auto emb = sentence_embedding(input, g_state.embeddings, mode, 3, g_state.cc->models[g_state.modelKey].bpe_tokenizer);
+    auto emb = sentence_embedding(input, g_state.embeddings, mode, 3, g_state.cc->models[g_state.modelKey].bpe_tokenizer.get());
     auto out = g_cc.forward("user", floatToDouble(emb));
     auto cmd = findClosestWord(
         doubleToFloat(out),
@@ -3376,7 +3624,7 @@ int main(int argc, char *argv[]) // 🆕 Parametreleri ekledik
 
         if (ifstream(bpe_model_path).good())
         {
-            cc.models[config.modelName].bpe_tokenizer = new ByteBPETokenizer();
+            cc.models[config.modelName].bpe_tokenizer = std::make_unique<ByteBPETokenizer>();
             cc.models[config.modelName].bpe_tokenizer->load(bpe_model_path);
             cout << "[INFO] BPE tokenizer yuklendi: " << bpe_model_path << "\n";
         }
@@ -3397,7 +3645,7 @@ int main(int argc, char *argv[]) // 🆕 Parametreleri ekledik
         // ✅ 2. BPE tokenizer'ı kontrol et
         if (cc.models[config.modelName].bpe_tokenizer == nullptr && config.mode == TokenizerMode::BPE)
         {
-            cc.models[config.modelName].bpe_tokenizer = new ByteBPETokenizer();
+            cc.models[config.modelName].bpe_tokenizer = std::make_unique<ByteBPETokenizer>();
             cc.models[config.modelName].bpe_tokenizer->load(bpe_model_path);
             cout << "[main] [INFO] BPE tokenizer yeniden yuklendi\n";
         }
@@ -3407,7 +3655,7 @@ int main(int argc, char *argv[]) // 🆕 Parametreleri ekledik
         // Yeni model oluşturuluyorsa BPE'yi yükle
         if (config.mode == TokenizerMode::BPE)
         {
-            cc.models[config.modelName].bpe_tokenizer = new ByteBPETokenizer();
+            cc.models[config.modelName].bpe_tokenizer = std::make_unique<ByteBPETokenizer>();
             cc.models[config.modelName].bpe_tokenizer->load(bpe_model_path);
         }
     }

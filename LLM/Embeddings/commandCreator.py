@@ -3,142 +3,11 @@ import sqlite3
 import csv
 import re
 import argparse
-from helpers import helpers as hp
+from helpers import helpers as hp, TokenizerMode, EMB_SIZE, EMB_RANGE
 import bytebpe as bpe
 import random
 import time
 
-
-# =========================
-# AYARLAR
-# =========================
-EMB_SIZE = 50
-EMB_RANGE = range(EMB_SIZE)
-
-# =========================
-# TOKENIZER MODE
-# =========================
-class TokenizerMode:
-    WORD = "word"
-    SUBWORD = "subword"
-    BPE = "bpe"
-
-# =========================
-# NORMALIZATION
-# =========================
-def normalize_vector(vec, min_val, max_val):
-    """
-    Vektörü aktivasyon fonksiyonunun çıktı aralığına göre normalize eder
-    """
-    vec_min = min(vec)
-    vec_max = max(vec)
-    
-    if vec_max == vec_min:
-        normalized = [(min_val + max_val) / 2.0] * len(vec)
-    else:
-        normalized = [(v - vec_min) / (vec_max - vec_min) for v in vec]
-        
-        if min_val != float('-inf') and max_val != float('inf'):
-            normalized = [min_val + v * (max_val - min_val) for v in normalized]
-        elif max_val != float('inf'):
-            normalized = [min_val + v * max_val for v in normalized]
-        elif min_val != float('-inf'):
-            normalized = [min_val + v * abs(min_val) for v in normalized]
-    
-    return normalized
-
-# =========================
-# TOKENIZER
-# =========================
-def tokenize(
-    sentence,
-    is_command=False,
-    mode=TokenizerMode.WORD,
-    subword_n=3,
-    bpe_tokenizer=None
-):
-    """
-    createEmbeddings.py'deki tokenize metoduyla aynı
-    """
-    sentence = sentence.lower()
-
-    # =========================
-    # BPE TOKENIZER
-    # =========================
-    if mode == TokenizerMode.BPE:
-        if not bpe_tokenizer:
-            raise ValueError("BPE tokenizer verilmedi ancak BPE modu seçildi")
-        
-        tokens = []
-        words = sentence.split()
-        
-        # Komut modeli ise normalize et
-        if is_command:
-            words = hp.normalize_command_params(words)
-        
-        for w in words:
-            # Özel token kontrolü
-            if w.startswith("<") and w.endswith(">"):
-                tokens.append(w)
-                continue
-            
-            # BPE encode
-            try:
-                ids = bpe_tokenizer.encode(w)
-                for token_id in ids:
-                    # ID'den token string'e dönüştür
-                    if token_id in bpe_tokenizer.id_to_token:
-                        token_bytes = bpe_tokenizer.id_to_token[token_id]
-                        token_str = token_bytes.decode("utf-8", errors="ignore")
-                        tokens.append(token_str)
-            except Exception as e:
-                print(f"[WARNING] BPE encode hatası '{w}': {e}")
-                tokens.append(w)
-        
-        return tokens
-
-    # =========================
-    # WORD TOKENIZER
-    # =========================
-    if mode == TokenizerMode.WORD:
-        tokens = sentence.split()
-
-        if is_command:
-            tokens = hp.normalize_command_params(tokens)
-
-        return tokens
-
-    # =========================
-    # SUBWORD TOKENIZER (char n-gram)
-    # =========================
-    if mode == TokenizerMode.SUBWORD:
-        tokens = []
-
-        # ÖNCE word-level ayır
-        words = sentence.split()
-
-        # Komut modeli ise normalize et
-        if is_command:
-            words = hp.normalize_command_params(words)
-
-        for w in words:
-            # 1️⃣ ÖZEL TOKEN → aynen bırak
-            if w.startswith("<") and w.endswith(">"):
-                tokens.append(w)
-                continue
-
-            # 2️⃣ NORMAL KELİME → subword
-            L = len(w)
-            if L < subword_n:
-                tokens.append(w)  # ✅ Kısa kelimeler olduğu gibi ekleniyor
-                continue
-
-            for i in range(L - subword_n + 1):
-                tokens.append(w[i:i + subword_n])
-
-        return tokens
-
-    return []
 
 # =========================
 # EMBEDDING YÜKLEYİCİ (Activation info ile)
@@ -198,59 +67,6 @@ def load_embeddings_sqlite(db_path="embeddings.db"):
     
     conn.close()
     return embeddings, activation_type, act_min, act_max
-
-# =========================
-# SENTENCE EMBEDDING (createEmbeddings.py ile aynı)
-# =========================
-def sentence_embedding(
-    sentence,
-    embeddings,
-    act_min,
-    act_max,
-    is_command=False,
-    tokenizer_mode=TokenizerMode.WORD,
-    subword_n=3,
-    bpe_tokenizer=None
-):
-    """
-    createEmbeddings.py'deki sentence_embedding metoduyla aynı mantık
-    
-    Args:
-        sentence: Tokenize edilecek cümle
-        embeddings: Kelime vektörleri dictionary
-        act_min: Aktivasyon fonksiyonu minimum değeri
-        act_max: Aktivasyon fonksiyonu maksimum değeri
-        is_command: True ise parametre normalizasyonu uygula
-        tokenizer_mode: TokenizerMode.WORD, SUBWORD veya BPE
-        subword_n: Subword n-gram değeri
-        bpe_tokenizer: BPE tokenizer objesi (sadece BPE modunda)
-    """
-    tokens = tokenize(
-        sentence,
-        is_command=is_command,
-        mode=tokenizer_mode,
-        subword_n=subword_n,
-        bpe_tokenizer=bpe_tokenizer
-    )
-    
-    vec = [0.0] * EMB_SIZE
-    cnt = 0
-    
-    for w in tokens:
-        if w in embeddings:
-            vw = embeddings[w]
-            for i in EMB_RANGE:
-                vec[i] += vw[i]
-            cnt += 1
-    
-    if cnt:
-        inv = 1.0 / cnt
-        for i in EMB_RANGE:
-            vec[i] *= inv
-    
-    # createEmbeddings.py gibi normalize et
-    vec = normalize_vector(vec, act_min, act_max)
-    return vec
 
 # =========================
 # CSV OLUŞTURUCU
@@ -349,7 +165,7 @@ def create_command_dataset(
 
         for i, (sentence, command) in enumerate(zip(sentences, commands), 1):
             # Sentence: normal embedding (parametre normalizasyonu YOK)
-            input_vec = sentence_embedding(
+            input_vec = hp.sentence_embedding(
                 sentence,
                 sentence_embeddings,
                 sent_min,
@@ -361,7 +177,7 @@ def create_command_dataset(
             )
             
             # Command: parametre normalizasyonlu embedding
-            target_vec = sentence_embedding(
+            target_vec = hp.sentence_embedding(
                 command,
                 command_embeddings,
                 cmd_min,

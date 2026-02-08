@@ -1,0 +1,118 @@
+{
+  "mkdir": {
+    "params": ["<DIR>"],
+    "description": "Yeni klasör oluşturur"
+  },
+  "rmdir": {
+    "params": ["<DIR>"],
+    "description": "Boş klasörü siler"
+  },
+  "cd": {
+    "params": ["<DIR>"],
+    "description": "Dizini değiştirir"
+  },
+  "ls": {
+    "params": ["<DIR>"],
+    "description": "Dizin içeriğini listeler"
+  },
+  "pwd": {
+    "params": [],
+    "description": "Bulunulan dizini gösterir"
+  },
+
+  "touch": {
+    "params": ["<FILE>"],
+    "description": "Boş dosya oluşturur"
+  },
+  "rm": {
+    "params": ["<FILE>"],
+    "description": "Dosya siler"
+  },
+  "cp": {
+    "params": ["<SRC>", "<DST>"],
+    "description": "Dosya veya klasörü kopyalar"
+  },
+  "mv": {
+    "params": ["<SRC>", "<DST>"],
+    "description": "Dosya veya klasörü taşır / yeniden adlandırır"
+  },
+
+  "cat": {
+    "params": ["<FILE>"],
+    "description": "Dosya içeriğini gösterir"
+  },
+  "less": {
+    "params": ["<FILE>"],
+    "description": "Dosyayı sayfa sayfa gösterir"
+  },
+  "nano": {
+    "params": ["<FILE>"],
+    "description": "Dosyayı nano editör ile açar"
+  },
+  "vim": {
+    "params": ["<FILE>"],
+    "description": "Dosyayı vim editör ile açar"
+  },
+
+  "chmod": {
+    "params": ["<MODE>", "<FILE>"],
+    "description": "Dosya izinlerini değiştirir"
+  },
+  "chown": {
+    "params": ["<USER>", "<FILE>"],
+    "description": "Dosya sahibini değiştirir"
+  },
+
+  "find": {
+    "params": ["<DIR>", "<NAME>"],
+    "description": "Dosya veya klasör arar"
+  },
+  "grep": {
+    "params": ["<PATTERN>", "<FILE>"],
+    "description": "Dosya içinde metin arar"
+  },
+
+  "tar": {
+    "params": ["<ARCHIVE>", "<DIR>"],
+    "description": "Arşiv oluşturur veya açar"
+  },
+  "zip": {
+    "params": ["<ARCHIVE>", "<FILE>"],
+    "description": "Zip arşivi oluşturur"
+  },
+  "unzip": {
+    "params": ["<ARCHIVE>"],
+    "description": "Zip arşivini açar"
+  },
+
+  "wget": {
+    "params": ["<URL>"],
+    "description": "İnternetten dosya indirir"
+  },
+  "curl": {
+    "params": ["<URL>"],
+    "description": "URL içeriğini alır"
+  },
+
+  "ps": {
+    "params": [],
+    "description": "Çalışan işlemleri listeler"
+  },
+  "kill": {
+    "params": ["<PID>"],
+    "description": "İşlemi sonlandırır"
+  },
+  "top": {
+    "params": [],
+    "description": "Sistem kaynak kullanımını gösterir"
+  },
+
+  "clear": {
+    "params": [],
+    "description": "Terminal ekranını temizler"
+  },
+  "exit": {
+    "params": [],
+    "description": "Terminalden çıkar"
+  }
+}

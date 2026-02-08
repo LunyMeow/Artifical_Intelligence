@@ -4,7 +4,7 @@ import sqlite3
 import sys
 import re
 import argparse
-from helpers import helpers as hp
+from helpers import helpers as hp, TokenizerMode, EMB_SIZE, EMB_RANGE, exp, log, tanh
 import bytebpe as bpe
 
 
@@ -12,69 +12,10 @@ import bytebpe as bpe
 # =========================
 # AYARLAR
 # =========================
-EMB_SIZE = 50
 WINDOW = 2
 EPOCHS = 100
 LR = 0.1
 NEG_SAMPLES = 5
-
-EMB_RANGE = range(EMB_SIZE)
-
-
-# =========================
-# TOKENIZER MODE
-# =========================
-class TokenizerMode:
-    WORD = "word"
-    SUBWORD = "subword"
-    BPE = "bpe"
-
-
-
-# =========================
-# AKTİVASYON FONKSİYONLARI
-# =========================
-exp = math.exp
-log = math.log
-tanh = math.tanh
-
-def get_activation_info(activation_type):
-    """
-    Aktivasyon fonksiyonunun çıktı aralığını döndürür
-    Returns: (min_val, max_val, activation_function)
-    """
-    activations = {
-        "sigmoid": (0.0, 1.0, lambda x: 1.0 / (1.0 + exp(-x))),
-        "tanh": (-1.0, 1.0, lambda x: tanh(x)),
-        "relu": (0.0, float('inf'), lambda x: max(0.0, x)),
-        "leaky_relu": (float('-inf'), float('inf'), lambda x: x if x > 0.0 else 0.01 * x),
-        "elu": (-0.01, float('inf'), lambda x: x if x >= 0.0 else 0.01 * (exp(x) - 1.0)),
-        "softplus": (0.0, float('inf'), lambda x: log(1.0 + exp(x))),
-        "linear": (float('-inf'), float('inf'), lambda x: x)
-    }
-    
-    return activations.get(activation_type, activations["sigmoid"])
-
-def normalize_vector(vec, min_val, max_val):
-    """
-    Vektörü aktivasyon fonksiyonunun çıktı aralığına göre normalize eder
-    """
-    vec_min = min(vec)
-    vec_max = max(vec)
-    
-    if vec_max == vec_min:
-        normalized = [(min_val + max_val) / 2.0] * len(vec)
-    else:
-        normalized = [(v - vec_min) / (vec_max - vec_min) for v in vec]
-        
-        if min_val != float('-inf') and max_val != float('inf'):
-            normalized = [min_val + v * (max_val - min_val) for v in normalized]
-        elif max_val != float('inf'):
-            normalized = [min_val + v * max_val for v in normalized]
-        elif min_val != float('-inf'):
-            normalized = [min_val + v * abs(min_val) for v in normalized]
-    
-    return normalized
 
 # =========================
 # YARDIMCI
@@ -98,7 +39,8 @@ class SimpleWord2Vec:
         is_command_model=False,
         tokenizer_mode=TokenizerMode.WORD,
         subword_n=3,
-        bpe_tokenizer=None
+        bpe_tokenizer=None,
+        normalize_command_tokens=False
     ):
         self.vocab = {}
         self.W_in = {}
@@ -109,8 +51,9 @@ class SimpleWord2Vec:
         self.tokenizer_mode = tokenizer_mode
         self.subword_n = subword_n
         self.bpe_tokenizer = bpe_tokenizer
-        self.act_min, self.act_max, self.activation = get_activation_info(activation_type) 
+        self.act_min, self.act_max, self.activation = hp.get_activation_info(activation_type) 
         self.activation_type = activation_type
+        self.normalize_command_tokens = normalize_command_tokens
 
     def tokenize(
         self,
@@ -122,86 +65,15 @@ class SimpleWord2Vec:
             mode = self.tokenizer_mode
         if subword_n is None:
             subword_n = self.subword_n
-            
-        sentence = sentence.lower()
-    
-        # =========================
-        # BPE TOKENIZER
-        # =========================
-        if mode == TokenizerMode.BPE:
-            if not self.bpe_tokenizer:
-                raise ValueError("BPE tokenizer verilmedi ancak BPE modu seçildi")
-            
-            tokens = []
-            words = sentence.split()
-            
-            # Komut modeli ise normalize et
-            if self.is_command_model:
-                words = hp.normalize_command_params(words)
-            
-            for w in words:
-                # Özel token kontrolü
-                if w.startswith("<") and w.endswith(">"):
-                    tokens.append(w)
-                    continue
-                
-                # BPE encode
-                try:
-                    ids = self.bpe_tokenizer.encode(w)
-                    for token_id in ids:
-                        # ID'den token string'e dönüştür
-                        if token_id in self.bpe_tokenizer.id_to_token:
-                            token_bytes = self.bpe_tokenizer.id_to_token[token_id]
-                            token_str = token_bytes.decode("utf-8", errors="ignore")
-                            tokens.append(token_str)
-                except Exception as e:
-                    print(f"[WARNING] BPE encode hatası '{w}': {e}")
-                    tokens.append(w)
-            
-            return tokens
-    
-        # =========================
-        # WORD TOKENIZER
-        # =========================
-        if mode == TokenizerMode.WORD:
-            tokens = sentence.split()
-    
-            if self.is_command_model:
-                tokens = hp.normalize_command_params(tokens)
-    
-            return tokens
-    
-        # =========================
-        # SUBWORD TOKENIZER (char n-gram)
-        # =========================
-        if mode == TokenizerMode.SUBWORD:
-            tokens = []
-    
-            # ÖNCE word-level ayır
-            words = sentence.split()
-    
-            # Komut modeli ise normalize et
-            if self.is_command_model:
-                words = hp.normalize_command_params(words)
-    
-            for w in words:
-                # 1️⃣ ÖZEL TOKEN → aynen bırak
-                if w.startswith("<") and w.endswith(">"):
-                    tokens.append(w)
-                    continue
-    
-                # 2️⃣ NORMAL KELİME → subword
-                L = len(w)
-                if L < subword_n:
-                    tokens.append(w)  # ✅ Kısa kelimeler olduğu gibi ekleniyor
-                    continue
-    
-                for i in range(L - subword_n + 1):
-                    tokens.append(w[i:i + subword_n])
-    
-            return tokens
-    
-        return []
+        
+        # helpers'den tokenize fonksiyonunu kullan
+        return hp.tokenize(
+            sentence,
+            is_command=(self.is_command_model and self.normalize_command_tokens),
+            mode=mode,
+            subword_n=subword_n,
+            bpe_tokenizer=self.bpe_tokenizer
+        )
 
 
     def add_sentence(self, sentence):
@@ -284,7 +156,7 @@ class SimpleWord2Vec:
             for i in EMB_RANGE:
                 vec[i] *= inv
 
-        vec = normalize_vector(vec, self.act_min, self.act_max)
+        vec = hp.normalize_vector(vec, self.act_min, self.act_max)
         return vec
     
     def normalize_all_embeddings(self):
@@ -294,8 +166,8 @@ class SimpleWord2Vec:
         print(f"[INFO] Vektörler normalize ediliyor... [{self.act_min}, {self.act_max}]")
         
         for word in self.W_in:
-            self.W_in[word] = normalize_vector(self.W_in[word], self.act_min, self.act_max)
-            self.W_out[word] = normalize_vector(self.W_out[word], self.act_min, self.act_max)
+            self.W_in[word] = hp.normalize_vector(self.W_in[word], self.act_min, self.act_max)
+            self.W_out[word] = hp.normalize_vector(self.W_out[word], self.act_min, self.act_max)
 
 # =========================
 # KAYIT
@@ -475,6 +347,12 @@ Not: Komutlardaki parametreler otomatik olarak tip placeholderlarına dönüşt�
         help='Komutlar için cümleler ile aynı tokenizeri kullan'
     )
 
+    parser.add_argument(
+        '--normalize-command-tokens',
+        action='store_true',
+        help='Komutlardaki parametreleri tip placeholderlarına dönüştür'
+    )
+
     
     args = parser.parse_args()
     
@@ -581,7 +459,9 @@ Not: Komutlardaki parametreler otomatik olarak tip placeholderlarına dönüşt�
         is_command_model=True,
         tokenizer_mode=TokenizerMode.WORD,
         subword_n=args.subword_n,
-        bpe_tokenizer=None if args.ctokenizer == "False" else tokenizer # Komutlar için BPE kullanmıyoruz
+        bpe_tokenizer=None if args.ctokenizer == "False" else tokenizer, # Komutlar için BPE kullanmıyoruz
+        normalize_command_tokens=args.normalize_command_tokens
+
     )
 
     print("[TRAIN] Eğitim başlıyor...\n")

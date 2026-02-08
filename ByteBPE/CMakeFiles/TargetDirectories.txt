@@ -1,0 +1,6 @@
+/home/kali/Desktop/Projects/Artifical_Intelligence/ByteBPE/CMakeFiles/bpe_tokenizer.dir
+/home/kali/Desktop/Projects/Artifical_Intelligence/ByteBPE/CMakeFiles/main.dir
+/home/kali/Desktop/Projects/Artifical_Intelligence/ByteBPE/CMakeFiles/edit_cache.dir
+/home/kali/Desktop/Projects/Artifical_Intelligence/ByteBPE/CMakeFiles/rebuild_cache.dir
+/home/kali/Desktop/Projects/Artifical_Intelligence/ByteBPE/_deps/json-build/CMakeFiles/edit_cache.dir
+/home/kali/Desktop/Projects/Artifical_Intelligence/ByteBPE/_deps/json-build/CMakeFiles/rebuild_cache.dir
