@@ -155,7 +155,7 @@ std::vector<int> ByteBPETokenizer::encode(const std::string &text)
         std::cout << "[BPE Encode] Baslangic byte tokenler: \n";
         for (const auto &token : seq)
         {
-            std::cout << "token(hex)= "  << bytes_to_hex(token) << " \n";
+            std::cout << "token(hex)= " << bytes_to_hex(token) << " \n";
         }
         std::cout << std::endl;
     }
@@ -256,8 +256,7 @@ std::string ByteBPETokenizer::decode(const std::vector<int> &ids)
 
 std::string ByteBPETokenizer::bytes_to_hex(const ByteSeq &bytes)
 {
-    std::cout << "[BPE bytes_to_hex] bytes.size() = " << bytes.size() << std::endl;
-    
+    //std::cout << "[BPE bytes_to_hex] bytes.size() = " << bytes.size() << std::endl;
 
     std::ostringstream oss;
     for (uint8_t b : bytes)
@@ -298,7 +297,11 @@ void ByteBPETokenizer::save(const std::string &path)
 
         std::ofstream file(path);
         if (!file.is_open())
-            throw std::runtime_error("Dosya acilamadi");
+        {
+            std::cerr << "[BPE Save] [Error] Dosya açılamadı";
+
+            // throw std::runtime_error("Dosya acilamadi");
+        }
         file << j.dump(2);
         if (debugLog)
             std::cout << "[BPE Save] Basarili." << std::endl;

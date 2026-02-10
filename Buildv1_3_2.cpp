@@ -9,7 +9,6 @@
 #include <cstdlib>
 #include <chrono> // <--- ekle
 #include <memory>
-
 #include <sstream>
 #include <algorithm>
 #include <set>
@@ -77,7 +76,7 @@ enum class RunMode
     SERVICE // web / api / arka plan
 };
 
-bool debugLog = true;
+bool debugLog = debug;
 string bpe_model_path = "LLM/Embeddings/bpe_tokenizer.json"; // Düzelteceğin zaman Network yapısının içinde de bu sabit var onu da değiştir
 
 TokenizerMode mode = TokenizerMode::BPE;
@@ -101,7 +100,6 @@ public:
 
         TokenizerMode mode;
         unique_ptr<ByteBPETokenizer> bpe_tokenizer;
-
 
         unordered_map<string, vector<float>> wordEmbeddings;
         unordered_map<string, vector<float>> commandEmbeddings;
@@ -1555,7 +1553,7 @@ public:
 
         string loadedModelKey; // Yüklenen model key'ini sakla
 
-        bool loadFromFile(const string &filename)
+        bool loadFromFile(const string &filename, const char *bpeFilePath = nullptr)
         {
             ifstream file(filename, ios::binary);
             if (!file.is_open())
@@ -1692,8 +1690,6 @@ public:
                     }
                 }
             }
-
-            
 
             // 5. Biases yapısını oku
             uint64_t numBiasLayers;
@@ -1851,6 +1847,7 @@ public:
             layerInputs.clear();
             layerOutputs.clear();
 
+            // ✅ Fonksiyon parametresini öncelikli kullan, yoksa binary'den oku
             bool hasBPE = false;
             if (!file.read(reinterpret_cast<char *>(&hasBPE), sizeof(hasBPE)))
             {
@@ -1860,43 +1857,75 @@ public:
 
             if (hasBPE)
             {
-                uint64_t pathLen;
-                if (!file.read(reinterpret_cast<char *>(&pathLen), sizeof(pathLen)))
-                {
-                    cerr << "[ERROR] Failed to read BPE path length" << endl;
-                    return false;
-                }
+                string loadedBpePath;
 
-                if (pathLen > 20000)
+                // 1️⃣ Önce parametreyi kontrol et
+                if (bpeFilePath != nullptr && bpeFilePath[0] != '\0')
                 {
-                    cerr << "[ERROR] BPE path length suspicious: " << pathLen << endl;
-                    return false;
-                }
+                    // ✅ Parametre verilmişse onu kullan
+                    loadedBpePath = bpeFilePath;
+                    if (debugLog)
+                        cout << "[loadFromFile] BPE path from parameter: " << loadedBpePath << endl;
 
-                string bpe_model_path(pathLen > 0 ? static_cast<size_t>(pathLen) : 0, ' ');
-                if (pathLen > 0)
-                {
-                    if (!file.read(&bpe_model_path[0], static_cast<std::streamsize>(pathLen)))
+                    // Binary'den path bilgisini oku ama atla (uyumluluk için)
+                    uint64_t pathLen;
+                    if (!file.read(reinterpret_cast<char *>(&pathLen), sizeof(pathLen)))
                     {
-                        cerr << "[ERROR] Failed to read BPE path" << endl;
+                        cerr << "[ERROR] Failed to read BPE path length" << endl;
                         return false;
                     }
+
+                    if (pathLen > 0 && pathLen < 20000)
+                    {
+                        // Binary'deki path'i atla
+                        file.seekg(pathLen, std::ios::cur);
+                    }
+                }
+                else
+                {
+                    // ❌ Parametre yoksa binary'den oku (eski davranış)
+                    uint64_t pathLen;
+                    if (!file.read(reinterpret_cast<char *>(&pathLen), sizeof(pathLen)))
+                    {
+                        cerr << "[ERROR] Failed to read BPE path length" << endl;
+                        return false;
+                    }
+
+                    if (pathLen > 20000)
+                    {
+                        cerr << "[ERROR] BPE path length suspicious: " << pathLen << endl;
+                        return false;
+                    }
+
+                    loadedBpePath.resize(pathLen > 0 ? static_cast<size_t>(pathLen) : 0);
+                    if (pathLen > 0)
+                    {
+                        if (!file.read(&loadedBpePath[0], static_cast<std::streamsize>(pathLen)))
+                        {
+                            cerr << "[ERROR] Failed to read BPE path" << endl;
+                            return false;
+                        }
+                    }
+
+                    if (debugLog)
+                        cout << "[loadFromFile] BPE path from binary: " << loadedBpePath << endl;
                 }
 
-                // BPE tokenizer'ı yükle
+                // 2️⃣ BPE tokenizer'ı yükle (her iki durumda da)
                 if (bpe_tokenizer != nullptr)
                 {
                     bpe_tokenizer.reset();
                     bpe_tokenizer = nullptr;
                 }
+
                 bpe_tokenizer = std::make_unique<ByteBPETokenizer>();
                 if (bpe_tokenizer != nullptr)
                 {
-                    bpe_tokenizer->debugLog = true; // Debug mesajlarını kapat
-                    bool ok = bpe_tokenizer->load(bpe_model_path);
+                    bpe_tokenizer->debugLog = debugLog;
+                    bool ok = bpe_tokenizer->load(loadedBpePath);
                     if (!ok)
                     {
-                        cerr << "[ERROR] BPE tokenizer failed to load: " << bpe_model_path << endl;
+                        cerr << "[ERROR] BPE tokenizer failed to load: " << loadedBpePath << endl;
                         bpe_tokenizer.reset();
                         bpe_tokenizer = nullptr;
                         hasBPE = false;
@@ -1916,10 +1945,12 @@ public:
                             }
                             else
                             {
-                                cout << "[loadFromFile] [INFO]  BPE tokenizer yuklendi: " << bpe_model_path << endl;
+                                cout << "[loadFromFile] [INFO] BPE tokenizer yuklendi: " << loadedBpePath
+                                     << " (vocab size: " << idmap.size() << ")" << endl;
                             }
                         }
-                        catch (...) {
+                        catch (...)
+                        {
                             cerr << "[ERROR] Exception while validating bpe_tokenizer" << endl;
                             bpe_tokenizer.reset();
                             bpe_tokenizer = nullptr;
@@ -2005,10 +2036,14 @@ public:
     }
 
     // Model yükleme fonksiyonu
-    bool loadModel(const string &filename, const string &newModelKey = "")
+    bool loadModel(const string &filename, const string &newModelKey = "", const string &bpeJsonPath = bpe_model_path)
     {
         Network net;
-        if (!net.loadFromFile(filename))
+        if (debug)
+        {
+            cout << "[CorticalColumn] [loadModel] BPE json path:" << bpeJsonPath << "\n";
+        }
+        if (!net.loadFromFile(filename, bpeJsonPath.c_str()))
         {
             return false;
         }
@@ -3160,7 +3195,7 @@ void cmdGenerate(InteractiveState &state, const string &sentence)
         sentence,
         state.cc->models[state.modelKey].wordEmbeddings,
         state.cc->models[state.modelKey].mode,
-        3,                                             // subword_n
+        3,                                                   // subword_n
         state.cc->models[state.modelKey].bpe_tokenizer.get() // ← EKLE
     );
 
@@ -3396,7 +3431,7 @@ SetupConfig setup(RunMode runMode, string modelName = "command_model", string cs
 
         if (config.mode == TokenizerMode::BPE)
         {
-            cout << "BPE json dosya yolunu giriniz (default:"<<bpe_model_path<<"):";
+            cout << "BPE json dosya yolunu giriniz (default:" << bpe_model_path << "):";
             cmdMode = "";
             getline(cin, cmdMode);
             if (!cmdMode.empty())
@@ -3416,14 +3451,14 @@ SetupConfig setup(RunMode runMode, string modelName = "command_model", string cs
         config.mode = TokenizerMode::BPE;
     }
 
-    config.modelFile = config.modelName + ".bin";
+    config.modelFile = "web/user_0000/" + config.modelName;
     config.csvAvailable = ifstream(config.csvFile).good();
 
     config.targetError = 0.05;
     config.maxEpoch = 10000;
     config.layers = {50, 256, 128, 50};
 
-    if (runMode == RunMode::CLI)
+    if (runMode == RunMode::CLI || debugLog)
     {
         cout << "\n========================================\n";
         cout << "AYARLAR:\n";
@@ -3448,6 +3483,7 @@ SetupConfig setup(RunMode runMode, string modelName = "command_model", string cs
 #ifdef __EMSCRIPTEN__
 #include <emscripten/emscripten.h>
 #endif
+#include <cstring>
 static CorticalColumn g_cc;
 static InteractiveState g_state;
 static bool modelLoaded = false;
@@ -3458,7 +3494,7 @@ extern "C"
 #ifdef __EMSCRIPTEN__
     EMSCRIPTEN_KEEPALIVE
 #endif
-    int load_user_model(const char *bin, const char *meta);
+    int load_user_model(const char *bin, const char *bpeJson);
 
 #ifdef __EMSCRIPTEN__
     EMSCRIPTEN_KEEPALIVE
@@ -3466,7 +3502,7 @@ extern "C"
     const char *run_inference(const char *input);
 }
 
-int load_user_model(const char *bin, const char *meta)
+int load_user_model(const char *bin, const char *bpeJson)
 {
     g_state.embeddings.clear();
     g_state.embeddingsForCommands.clear();
@@ -3474,9 +3510,10 @@ int load_user_model(const char *bin, const char *meta)
 
     g_cc = CorticalColumn(); // temiz başlat (çok önemli)
     g_cc.addModel("user", {50, 256, 128, 50}, "tanh");
-
-    if (!g_cc.loadModel(bin, "user"))
+    cout << "[load_user_model] BPE json dosya yolu :" << bpeJson << "\n";
+    if (!g_cc.loadModel(bin, "user", bpeJson))
     {
+
         cout << "Model couldnt loaded.";
         return 1;
     }
@@ -3486,20 +3523,29 @@ int load_user_model(const char *bin, const char *meta)
     g_state.embeddings = g_cc.models[g_state.modelKey].wordEmbeddings;
     g_state.embeddingsForCommands = g_cc.models[g_state.modelKey].commandEmbeddings;
 
-    if (g_state.mode == TokenizerMode::BPE)
+    // ✅ YENİ KOD:
+        if (g_state.mode == TokenizerMode::BPE)
     {
-
-        if (ifstream(bin).good())
+        if (bpeJson && bpeJson[0] != '\0') // ✅ bpeJson parametresini kontrol et
         {
-            g_cc.models[g_state.modelKey].bpe_tokenizer = std::make_unique<ByteBPETokenizer>();
-            g_cc.models[g_state.modelKey].bpe_tokenizer->load(bin);
-            if (debugLog)
-                cout << "[INFO] BPE tokenizer yuklendi: " << bin << "\n";
+            if (ifstream(bpeJson).good()) // ✅ JSON dosyasını kontrol et
+            {
+                g_cc.models[g_state.modelKey].bpe_tokenizer = std::make_unique<ByteBPETokenizer>();
+                g_cc.models[g_state.modelKey].bpe_tokenizer->load(bpeJson); // ✅ JSON yükle
+                if (debugLog)
+                    cout << "[INFO] BPE tokenizer yuklendi: " << bpeJson << "\n";
+            }
+            else
+            {
+                if (debugLog)
+                    cerr << "[ERROR] BPE tokenizer dosyası bulunamadı: " << bpeJson << "\n";
+                return 1;
+            }
         }
         else
         {
             if (debugLog)
-                cerr << "[ERROR] BPE model bulunamadi: " << bin << "\n";
+                cerr << "[ERROR] BPE tokenizer verilmedi!\n";
             return 1;
         }
     }
@@ -3546,7 +3592,7 @@ int main(int argc, char *argv[]) // 🆕 Parametreleri ekledik
     {
         cout << "[TEST MODE] WASM\n";
         runMode = RunMode::SERVICE;
-        bpe_model_path = "web/user_0000/command_model.json";
+        bpe_model_path = string(argv[2]) + ".json";
         if (debugLog)
         {
             cout << "[main] BPE model dosyası " << bpe_model_path << " olarak değiştirildi.\n";
@@ -3571,7 +3617,7 @@ int main(int argc, char *argv[]) // 🆕 Parametreleri ekledik
         cc.addModel(config.modelName, config.layers, "tanh");
 
         // Model yükle
-        if (cc.loadModel(config.modelFile, config.modelName))
+        if (cc.loadModel(config.modelFile, config.modelName, bpe_model_path))
         {
             cout << "[OK] Model yuklendi\n";
             cout << "  Word embeddings: "
@@ -3597,17 +3643,12 @@ int main(int argc, char *argv[]) // 🆕 Parametreleri ekledik
         {
             cout << "[ERROR] Model yuklenemedi!\n";
         }
-        if (debugLog)
-        {
-            cout << "[main] BPE model dosyası " << bpe_model_path << " .\n";
-        }
 
         return 0;
     }
 
     // CLI çalıştırmak istersen:
     // RunMode mode = RunMode::CLI;
-
     SetupConfig config = setup(runMode);
 
     CorticalColumn cc;

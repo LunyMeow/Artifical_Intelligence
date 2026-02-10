@@ -145,45 +145,48 @@ async function init() {
         } catch (e) {
             // Directory already exists → ignore
         }
-
+            
         // Model dosyalarını indir (KULLANICIYA ÖZEL)
         updateStatus(`<span class="loading"></span> ${currentUser.username} için model indiriliyor...`, 'loading');
-
-        const binResp = await fetch('/model/command_model.bin');
+            
+        // 1️⃣ command_model binary dosyasını indir
+        const binResp = await fetch('/model/command_model');
         if (!binResp.ok) throw new Error("Model binary yüklenemedi");
         const bin = await binResp.arrayBuffer();
-
+            
+        // 2️⃣ bpe_tokenizer.json dosyasını indir
+        const jsonResp = await fetch('/model/bpe_tokenizer.json');
+        if (!jsonResp.ok) throw new Error("BPE tokenizer JSON yüklenemedi");
+        const jsonData = await jsonResp.arrayBuffer();
+            
+        // 3️⃣ Dosyaları WASM filesystem'e yaz
         Module.FS.writeFile(
-            `/${currentUser.modelFolder}/command_model.bin`,
+            `/${currentUser.modelFolder}/command_model`,
             new Uint8Array(bin)
         );
-
-        const metaResp = await fetch('/model/command_model.meta');
-        if (!metaResp.ok) throw new Error("Model metadata yüklenemedi");
-        const meta = await metaResp.text();
-
+        
         Module.FS.writeFile(
-            `/${currentUser.modelFolder}/command_model.meta`,
-            meta
+            `/${currentUser.modelFolder}/bpe_tokenizer.json`,
+            new Uint8Array(jsonData)  // ✅ DOĞRU DATA
         );
-
+        
         // WASM fonksiyonlarını bağla
         updateStatus('<span class="loading"></span> Model yükleniyor...', 'loading');
-
+        
         loadModel = Module.cwrap(
             'load_user_model',
             null, ['string', 'string']
         );
-
+        
         runInference = Module.cwrap(
             'run_inference',
             'string', ['string']
         );
-
+        
         // Modeli yükle (kullanıcıya özel path)
         loadModel(
-            `/${currentUser.modelFolder}/command_model.bin`,
-            `/${currentUser.modelFolder}/command_model.meta`
+            `/${currentUser.modelFolder}/command_model`,
+            `/${currentUser.modelFolder}/bpe_tokenizer.json`  // ✅ JSON dosyasını gönder
         );
 
         // Başarılı
