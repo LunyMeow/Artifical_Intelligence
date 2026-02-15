@@ -1,3 +1,0 @@
-Merhaba Dünya!
-C++ dosya işlemleri öğreniyorum.
-Bu satır dosyanın sonuna eklendi.

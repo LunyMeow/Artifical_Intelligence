@@ -21,8 +21,20 @@
 #endif
 
 #include "ByteBPE/ByteBPETokenizer.h"
+#include "CommandParamExtractor.h"
+#include "InferenceEngine.h"
 
 using namespace std;
+
+// Disambiguate getline to use std version
+using std::getline;
+
+// ============================================
+// FORWARD DECLARATIONS & GLOBALS
+// ============================================
+// These are initialized in load_user_model()
+static CommandParamExtractor *g_param_extractor = nullptr;
+static InferenceEngine *g_inference_engine = nullptr;
 
 bool debug = true;
 // ---------------------------
@@ -51,12 +63,8 @@ void log_saver(const string &message, string log_file = "network_changes.log")
 /* =========================
    TOKENIZER
 ========================= */
-enum class TokenizerMode
-{
-    WORD,    // mevcut (default)
-    SUBWORD, // char n-gram
-    BPE
-};
+// TokenizerMode is defined in `InferenceEngine.h` to avoid duplicate definitions.
+// Do not redefine it here.
 
 struct SetupConfig
 {
@@ -101,6 +109,12 @@ public:
         TokenizerMode mode;
         unique_ptr<ByteBPETokenizer> bpe_tokenizer;
 
+        // UNIFIED EMBEDDİNG: Her iki map de aynı embeddings.db'den beslenir.
+        // wordEmbeddings    → token_type='word'  olan token'lar (cümle kelimeleri)
+        // commandEmbeddings → token_type='command' olan token'lar (<dir>, mkdir vb.)
+        // sentence_embedding() her zaman wordEmbeddings kullanır.
+        // findClosestWord()   her zaman commandEmbeddings kullanır.
+        // Çakışan token'lar (eğer varsa) aynı vektörü paylaşır çünkü tek DB var.
         unordered_map<string, vector<float>> wordEmbeddings;
         unordered_map<string, vector<float>> commandEmbeddings;
 
@@ -1499,6 +1513,8 @@ public:
             }
 
             // 🆕 6. WORD EMBEDDINGS KAYDET
+            // Unified sistemde: token_type='word' olan token'lar.
+            // loadEmbeddingsDB() tarafından wordEmbeddings'e doldurulmuştu.
             uint64_t wordEmbSize = static_cast<uint64_t>(wordEmbeddings.size());
             file.write(reinterpret_cast<const char *>(&wordEmbSize), sizeof(wordEmbSize));
 
@@ -1518,6 +1534,8 @@ public:
             }
 
             // 🆕 7. COMMAND EMBEDDINGS KAYDET
+            // Unified sistemde: token_type='command' olan token'lar (<dir>, mkdir vb.)
+            // loadEmbeddingsDB() tarafından commandEmbeddings'e doldurulmuştu.
             uint64_t cmdEmbSize = static_cast<uint64_t>(commandEmbeddings.size());
             file.write(reinterpret_cast<const char *>(&cmdEmbSize), sizeof(cmdEmbSize));
 
@@ -2576,54 +2594,160 @@ const int EMB_SIZE = 50;
 
 #include <sqlite3.h>
 
-unordered_map<string, vector<float>> load_embeddings_sqlite(
+// ============================================================
+// UNIFIED EMBEDDING YÜKLEYİCİSİ
+// Tek embeddings.db dosyasından okur; token_type sütununa göre
+// wordEmbeddings ve commandEmbeddings map'lerini doldurur.
+// Geriye uyumluluk: token_type sütunu yoksa COMMAND_TOKENS kümesine
+// bakarak ayrımı yapar.
+// ============================================================
+static const std::set<std::string> COMMAND_TOKENS_SET = {
+    "<dir>", "<file>", "<path>", "<number>", "<ip>", "<url>", "<var>", "<end>"
+};
+static const std::set<std::string> KNOWN_COMMANDS_SET = {
+    "mkdir","rm","cd","ls","cp","mv","touch","cat",
+    "grep","find","chmod","chown","sudo","apt","git",
+    "python","python3","node","npm","bash","sh","echo",
+    "tar","zip","unzip","wget","curl","ssh","scp"
+};
+
+struct UnifiedEmbeddings {
+    unordered_map<string, vector<float>> all;        // tüm token'lar
+    unordered_map<string, vector<float>> words;      // token_type='word'
+    unordered_map<string, vector<float>> commands;   // token_type='command'
+    string activation_type;
+    float  act_min = 0.0f;
+    float  act_max = 1.0f;
+};
+
+UnifiedEmbeddings load_unified_embeddings_sqlite(
     const string &db_path,
-    int EMB_SIZE)
+    int emb_size)
 {
-    unordered_map<string, vector<float>> embeddings;
+    UnifiedEmbeddings result;
     sqlite3 *db;
 
     if (sqlite3_open(db_path.c_str(), &db) != SQLITE_OK)
     {
-        cerr << "[ERROR] SQLite acilamadi: " << sqlite3_errmsg(db) << endl;
-        return embeddings;
+        cerr << "[ERROR] SQLite acilamadi: " << sqlite3_errmsg(db) << "\n";
+        return result;
     }
 
-    const char *sql = "SELECT word, vector FROM embeddings;";
-    sqlite3_stmt *stmt;
+    // token_type sütunu var mı kontrol et
+    bool has_token_type = false;
+    {
+        sqlite3_stmt *chk;
+        if (sqlite3_prepare_v2(db, "PRAGMA table_info(embeddings);", -1, &chk, nullptr) == SQLITE_OK)
+        {
+            while (sqlite3_step(chk) == SQLITE_ROW)
+            {
+                const char *col = reinterpret_cast<const char*>(sqlite3_column_text(chk, 1));
+                if (col && std::string(col) == "token_type")
+                {
+                    has_token_type = true;
+                    break;
+                }
+            }
+            sqlite3_finalize(chk);
+        }
+    }
 
+    if (!has_token_type && debugLog)
+    {
+        cout << "[UYARI] embeddings.db'de token_type sutunu yok. "
+             << "Eski format — COMMAND_TOKENS kumesine gore ayrim yapiliyor.\n";
+    }
+
+    // Sorgu: token_type varsa onu da çek
+    const char *sql = has_token_type
+        ? "SELECT word, vector, activation_type, act_min, act_max, token_type FROM embeddings;"
+        : "SELECT word, vector, activation_type, act_min, act_max FROM embeddings;";
+
+    sqlite3_stmt *stmt;
     if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) != SQLITE_OK)
     {
         cerr << "[ERROR] SQL prepare hatasi\n";
         sqlite3_close(db);
-        return embeddings;
+        return result;
     }
 
+    bool first_row = true;
     while (sqlite3_step(stmt) == SQLITE_ROW)
     {
-        string word = reinterpret_cast<const char *>(sqlite3_column_text(stmt, 0));
-        string vec_str = reinterpret_cast<const char *>(sqlite3_column_text(stmt, 1));
+        const char *word_c   = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
+        const char *vec_c    = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
 
+        if (!word_c || !vec_c) continue;
+
+        string word   = word_c;
+        string vec_str = vec_c;
+
+        // Aktivasyon bilgisini bir kez al
+        if (first_row)
+        {
+            const char *act_c = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 2));
+            if (act_c) result.activation_type = act_c;
+            result.act_min = static_cast<float>(sqlite3_column_double(stmt, 3));
+            result.act_max = static_cast<float>(sqlite3_column_double(stmt, 4));
+            first_row = false;
+        }
+
+        // Vektörü parse et
         vector<float> vec;
-        vec.reserve(EMB_SIZE);
-
+        vec.reserve(emb_size);
         stringstream ss(vec_str);
         string val;
         while (getline(ss, val, ','))
         {
-            vec.push_back(stof(val));
+            try { vec.push_back(stof(val)); } catch (...) {}
+        }
+        if ((int)vec.size() != emb_size) continue;
+
+        result.all[word] = vec;
+
+        // token_type ayrımı
+        string token_type = "word";
+        if (has_token_type)
+        {
+            const char *tt = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 5));
+            if (tt) token_type = tt;
+        }
+        else
+        {
+            // Geriye uyumluluk: küme kontrolü
+            if (COMMAND_TOKENS_SET.count(word) || KNOWN_COMMANDS_SET.count(word))
+                token_type = "command";
         }
 
-        if ((int)vec.size() == EMB_SIZE)
-        {
-            embeddings[word] = vec;
-        }
+        if (token_type == "command")
+            result.commands[word] = vec;
+        else
+            result.words[word] = vec;
     }
 
     sqlite3_finalize(stmt);
     sqlite3_close(db);
 
-    return embeddings;
+    if (debugLog)
+    {
+        cout << "[load_unified_embeddings_sqlite] DB: " << db_path << "\n"
+             << "  Toplam  : " << result.all.size()      << "\n"
+             << "  Word    : " << result.words.size()    << "\n"
+             << "  Command : " << result.commands.size() << "\n"
+             << "  Activation: " << result.activation_type
+             << " [" << result.act_min << ", " << result.act_max << "]\n";
+    }
+
+    return result;
+}
+
+// Geriye uyumluluk — sadece bir map döndüren eski imzayı koruyan wrapper
+unordered_map<string, vector<float>> load_embeddings_sqlite(
+    const string &db_path,
+    int emb_size)
+{
+    auto ue = load_unified_embeddings_sqlite(db_path, emb_size);
+    return ue.all;   // tüm token'ları döndür
 }
 #endif
 
@@ -3095,34 +3219,60 @@ struct InteractiveState
     int maxEpoch;
     TokenizerMode mode;
 
-    unordered_map<string, vector<float>> embeddings;
-    unordered_map<string, vector<float>> embeddingsForCommands;
+    unordered_map<string, vector<float>> embeddings;            // token_type='word'
+    unordered_map<string, vector<float>> embeddingsForCommands; // token_type='command'
+
+    // FIX-3: word + command birleşimi — CommandParamExtractor için
+    // "Token NOT in DB" sorununu çözer (<dir>, bash vb. bulunamıyordu)
+    unordered_map<string, vector<float>> allEmbeddings;
 };
 
 // All Commands:
 #ifndef __EMSCRIPTEN__
-// Load embeddings
+// ============================================================
+// UNIFIED loadEmbeddingsDB
+// Artık tek embeddings.db kullanılır; eski embeddingsForCommands.db
+// yolu yalnızca geriye uyumluluk için kontrol edilir ve uyarı verilir.
+// ============================================================
 void loadEmbeddingsDB(InteractiveState &state)
 {
-    if (ifstream("LLM/Embeddings/embeddings.db").good())
-    {
-        state.embeddings =
-            load_embeddings_sqlite("LLM/Embeddings/embeddings.db", EMB_SIZE);
-        cout << "[INFO] Embeddings yuklendi ("
-             << state.embeddings.size() << ")\n";
-    }
-    else
-        cout << "[ERROR] embeddings.db bulunamadi\n";
+    const string unified_db = "LLM/Embeddings/embeddings.db";
+    const string old_cmd_db = "LLM/Embeddings/embeddingsForCommands.db";
 
-    if (ifstream("LLM/Embeddings/embeddingsForCommands.db").good())
+    if (!ifstream(unified_db).good())
     {
-        state.embeddingsForCommands =
-            load_embeddings_sqlite("LLM/Embeddings/embeddingsForCommands.db", EMB_SIZE);
-        cout << "[INFO] Command embeddings yuklendi ("
-             << state.embeddingsForCommands.size() << ")\n";
+        cerr << "[ERROR] embeddings.db bulunamadi: " << unified_db << "\n";
+        cerr << "[IPUCU] Once python3 createEmbeddings.py calistirin.\n";
+        return;
     }
-    else
-        cout << "[ERROR] embeddingsForCommands.db bulunamadi\n";
+
+    // Eski iki-DB sisteminden geliyorsa uyar
+    if (ifstream(old_cmd_db).good())
+    {
+        cout << "[UYARI] embeddingsForCommands.db bulundu ancak artik kullanilmiyor.\n"
+             << "        Unified embeddings.db geçerli kaynaktır.\n";
+    }
+
+    auto ue = load_unified_embeddings_sqlite(unified_db, EMB_SIZE);
+
+    state.embeddings            = ue.words;    // word token'ları (sentence embedding için)
+    state.embeddingsForCommands = ue.commands; // command token'ları (findClosestWord için)
+    state.allEmbeddings         = ue.all;      // FIX-3: word + command birleşimi
+
+    cout << "[INFO] Unified embeddings yuklendi:\n"
+         << "  Word token    : " << state.embeddings.size()            << "\n"
+         << "  Command token : " << state.embeddingsForCommands.size() << "\n"
+         << "  Toplam        : " << ue.all.size()                      << "\n";
+
+    // Güvenlik kontrolü: hiç command token yoksa uyar
+    if (state.embeddingsForCommands.empty())
+    {
+        cerr << "[UYARI] Command embedding bos! "
+             << "createEmbeddings.py yeniden calistirilin (token_type sutunu eksik olabilir).\n";
+        // Fallback: all kullan
+        state.embeddingsForCommands = ue.all;
+        cout << "[FALLBACK] embeddingsForCommands = tum tokenlar\n";
+    }
 }
 #endif
 void cmdHelp()
@@ -3230,7 +3380,47 @@ void cmdGenerate(InteractiveState &state, const string &sentence)
 
     cout << "\n[KOMUT TAHMİNİ]\n";
     cout << "Girdi: " << sentence << "\n";
-    cout << "Tahmin: " << cmd << "\n\n";
+    cout << "Tahmin (single): " << cmd << "\n";
+
+    // 🆕 Token-by-token generation (LLM style)
+    if (g_inference_engine && !sentence.empty())
+    {
+        // Generate tokens until <end> or max 20 tokens
+        string generated_command = g_inference_engine->generate_tokens(
+            sentence, // Input sentence for context
+            cmd,      // Start with predicted command
+            20        // Max 20 tokens
+        );
+
+        cout << "\n[LLM-STYLE GENERATION]\n";
+        cout << "  Generated: " << generated_command << "\n";
+
+    // Also show parameter extraction if available
+    cout << "\n[PARAMETRELER]\n";
+    auto extracted = g_inference_engine->infer(sentence, cmd, true);
+
+    if (!extracted.parameters.empty())
+    {
+        for (const auto &[token, score] : extracted.parameters)
+        {
+            cout << "  [PARAM] \"" << token << "\" (confidence=" << score << ")\n";
+        }
+        
+        // Fill template with extracted parameters
+        string final_command = g_inference_engine->fill_template(cmd, extracted.parameters);
+        
+        cout << "\n[SONUÇ]\n";
+        cout << "  Token Generation: " << generated_command << "\n";
+        cout << "  Final Command: " << final_command << "\n";
+    }
+    else
+    {
+        cout << "  (Parametre bulunamadı)\n";
+        cout << "\n[SONUÇ]\n";
+        cout << "  Token Generation: " << generated_command << "\n";
+    }
+    }
+    cout << "\n";
 }
 
 void generateForWasmTest(CorticalColumn &cc, const string &sentence, string modelKey)
@@ -3253,7 +3443,17 @@ void generateForWasmTest(CorticalColumn &cc, const string &sentence, string mode
 
     cout << "\n[KOMUT TAHMİNİ]\n";
     cout << "Girdi: " << sentence << "\n";
-    cout << "Tahmin: " << cmd << "\n\n";
+    cout << "Tahmin: " << cmd << "\n";
+
+    // 🆕 Token-by-token generation (LLM style)
+    if (g_inference_engine && !sentence.empty())
+    {
+        string generated = g_inference_engine->generate_tokens(sentence, cmd, 20);
+
+        cout << "\n[LLM-STYLE GENERATION]\n";
+        cout << "  Generated: " << generated << "\n";
+    }
+    cout << "\n";
 }
 
 // train
@@ -3391,7 +3591,57 @@ void interactiveTraining(InteractiveState &state, const string &line)
     else if (line.rfind("load", 0) == 0)
         cmdLoad(state, line.substr(5));
     else if (line.rfind("generate", 0) == 0)
+    {
+        // Initialize InferenceEngine on first use if not already initialized
+        if (!g_inference_engine && !state.embeddings.empty() && !state.embeddingsForCommands.empty())
+        {
+            // FIX-1: Model'den BPE tokenizer ve mode'u al
+            auto *bpe_tok = state.cc->models[state.modelKey].bpe_tokenizer.get();
+            TokenizerMode tmode = state.cc->models[state.modelKey].mode;
+
+            // FIX-3: allEmbeddings kullan (word + command token'ları)
+            // Boşsa word+command'ı manuel birleştir
+            const auto *all_ptr = &state.allEmbeddings;
+            unordered_map<string, vector<float>> merged_fallback;
+            if (state.allEmbeddings.empty())
+            {
+                merged_fallback = state.embeddings;
+                for (const auto &[k, v] : state.embeddingsForCommands)
+                    merged_fallback.emplace(k, v);
+                all_ptr = &merged_fallback;
+            }
+
+            if (!g_param_extractor)
+            {
+                // CommandParamExtractor orijinal imzası: (embeddings, schema_json_str, debug)
+                // schema JSON string olarak verilmez — boş bırakılır
+                g_param_extractor = new CommandParamExtractor(
+                    *all_ptr, "", debugLog);
+            }
+            g_inference_engine = new InferenceEngine(
+                g_param_extractor,
+                *all_ptr,
+                state.embeddingsForCommands,
+                debugLog,
+                tmode,
+                bpe_tok);
+
+            // Schema'yı JSON dosyasından yükle
+            g_inference_engine->init_with_schema("LLM/Embeddings/command_schema.json");
+
+            if (debugLog)
+            {
+                cout << "[interactiveTraining] InferenceEngine initialized\n"
+                     << "  TokenizerMode : "
+                     << (tmode == TokenizerMode::BPE ? "BPE"
+                        : tmode == TokenizerMode::SUBWORD ? "SUBWORD" : "WORD") << "\n"
+                     << "  BPE tokenizer : " << (bpe_tok ? "YES" : "NO") << "\n"
+                     << "  AllEmbeddings : " << all_ptr->size() << " tokens\n";
+            }
+        }
+        
         cmdGenerate(state, line.substr(9));
+    }
     else if (line.rfind("terminal", 0) == 0)
     {
 #ifndef __EMSCRIPTEN__
@@ -3484,6 +3734,10 @@ SetupConfig setup(RunMode runMode, string modelName = "command_model", string cs
 #include <emscripten/emscripten.h>
 #endif
 #include <cstring>
+
+// ============================================
+// GLOBAL INSTANCES
+// ============================================
 static CorticalColumn g_cc;
 static InteractiveState g_state;
 static bool modelLoaded = false;
@@ -3508,46 +3762,99 @@ int load_user_model(const char *bin, const char *bpeJson)
     g_state.embeddingsForCommands.clear();
     modelLoaded = false;
 
-    g_cc = CorticalColumn(); // temiz başlat (çok önemli)
+    g_cc = CorticalColumn(); // temiz başlat
     g_cc.addModel("user", {50, 256, 128, 50}, "tanh");
-    cout << "[load_user_model] BPE json dosya yolu :" << bpeJson << "\n";
+    cout << "[load_user_model] BPE json dosya yolu: " << bpeJson << "\n";
     if (!g_cc.loadModel(bin, "user", bpeJson))
     {
-
-        cout << "Model couldnt loaded.";
+        cout << "[load_user_model] Model yuklenemedi.\n";
         return 1;
     }
 
-    g_state.cc = &g_cc;
+    g_state.cc       = &g_cc;
     g_state.modelKey = "user";
-    g_state.embeddings = g_cc.models[g_state.modelKey].wordEmbeddings;
+
+    // UNIFIED EMBEDDİNG: Binary içindeki wordEmbeddings / commandEmbeddings
+    // artık tek embeddings.db'den üretilmiş; token_type ile ayrılmış.
+    g_state.embeddings            = g_cc.models[g_state.modelKey].wordEmbeddings;
     g_state.embeddingsForCommands = g_cc.models[g_state.modelKey].commandEmbeddings;
 
-    // ✅ YENİ KOD:
-        if (g_state.mode == TokenizerMode::BPE)
+    if (debugLog)
     {
-        if (bpeJson && bpeJson[0] != '\0') // ✅ bpeJson parametresini kontrol et
+        cout << "[load_user_model] Unified embeddings aktarildi:\n"
+             << "  Word tokens   : " << g_state.embeddings.size()            << "\n"
+             << "  Command tokens: " << g_state.embeddingsForCommands.size() << "\n";
+    }
+
+    // Güvenlik: commandEmbeddings boşsa wordEmbeddings'den fallback yap
+    if (g_state.embeddingsForCommands.empty() && !g_state.embeddings.empty())
+    {
+        cerr << "[UYARI] commandEmbeddings bos! "
+             << "Model eski format DB ile egitilmis olabilir. "
+             << "wordEmbeddings fallback olarak kullaniliyor.\n";
+        g_state.embeddingsForCommands = g_state.embeddings;
+    }
+
+    if (g_state.mode == TokenizerMode::BPE)
+    {
+        if (bpeJson && bpeJson[0] != '\0')
         {
-            if (ifstream(bpeJson).good()) // ✅ JSON dosyasını kontrol et
+            if (ifstream(bpeJson).good())
             {
                 g_cc.models[g_state.modelKey].bpe_tokenizer = std::make_unique<ByteBPETokenizer>();
-                g_cc.models[g_state.modelKey].bpe_tokenizer->load(bpeJson); // ✅ JSON yükle
+                g_cc.models[g_state.modelKey].bpe_tokenizer->load(bpeJson);
                 if (debugLog)
                     cout << "[INFO] BPE tokenizer yuklendi: " << bpeJson << "\n";
             }
             else
             {
-                if (debugLog)
-                    cerr << "[ERROR] BPE tokenizer dosyası bulunamadı: " << bpeJson << "\n";
+                cerr << "[ERROR] BPE tokenizer dosyasi bulunamadi: " << bpeJson << "\n";
                 return 1;
             }
         }
         else
         {
-            if (debugLog)
-                cerr << "[ERROR] BPE tokenizer verilmedi!\n";
+            cerr << "[ERROR] BPE tokenizer verilmedi!\n";
             return 1;
         }
+    }
+
+    // InferenceEngine başlat
+    if (g_param_extractor != nullptr) { delete g_param_extractor; g_param_extractor = nullptr; }
+    if (g_inference_engine != nullptr) { delete g_inference_engine; g_inference_engine = nullptr; }
+
+    // FIX-1: BPE tokenizer ve mode'u al
+    auto *bpe_tok_wasm = g_cc.models[g_state.modelKey].bpe_tokenizer.get();
+    TokenizerMode tmode_wasm = g_cc.models[g_state.modelKey].mode;
+
+    // FIX-3: allEmbeddings oluştur = wordEmbeddings + commandEmbeddings
+    // Binary'den yüklenen model'de allEmbeddings yok, burada birleştiriyoruz.
+    unordered_map<string, vector<float>> all_emb_wasm = g_state.embeddings;
+    for (const auto &[k, v] : g_state.embeddingsForCommands)
+        all_emb_wasm.emplace(k, v); // command token'larını ekle
+
+    // CommandParamExtractor orijinal imzası: (embeddings, schema_json_str, debug)
+    g_param_extractor = new CommandParamExtractor(
+        all_emb_wasm, "", debugLog);
+
+    g_inference_engine = new InferenceEngine(
+        g_param_extractor,
+        all_emb_wasm,
+        g_state.embeddingsForCommands,
+        debugLog,
+        tmode_wasm,
+        bpe_tok_wasm);
+
+    std::string schema_path = "LLM/Embeddings/command_schema.json";
+    bool schema_loaded = g_inference_engine->init_with_schema(schema_path);
+
+    if (debugLog)
+    {
+        cout << "[load_user_model] InferenceEngine initialized\n";
+        cout << (schema_loaded
+            ? "[load_user_model] Command schema loaded from JSON\n"
+            : "[load_user_model] Using fallback command templates\n");
+        cout << "[load_user_model] " << g_param_extractor->get_stats();
     }
 
     modelLoaded = true;
@@ -3558,7 +3865,7 @@ const char *run_inference(const char *input)
 {
     static string result;
 
-    if (!modelLoaded)
+    if (!modelLoaded || !g_inference_engine)
     {
         result = "MODEL_NOT_LOADED";
         return result.c_str();
@@ -3567,18 +3874,45 @@ const char *run_inference(const char *input)
     if (g_state.embeddings.empty() ||
         g_state.embeddingsForCommands.empty())
     {
-        result = "EMBEDDINGS_NOT_LOADED " + std::to_string(g_state.embeddings.size()) + " - " + std::to_string(g_state.embeddingsForCommands.size());
+        result = "EMBEDDINGS_NOT_LOADED words=" + std::to_string(g_state.embeddings.size())
+               + " commands=" + std::to_string(g_state.embeddingsForCommands.size())
+               + " (unified embeddings.db yuklendi mi?)";
         return result.c_str();
     }
 
-    auto emb = sentence_embedding(input, g_state.embeddings, mode, 3, g_state.cc->models[g_state.modelKey].bpe_tokenizer.get());
-    auto out = g_cc.forward("user", floatToDouble(emb));
-    auto cmd = findClosestWord(
-        doubleToFloat(out),
-        g_state.embeddingsForCommands);
+    try
+    {
+        // Step 1: Generate embedding from input sentence
+        auto emb = sentence_embedding(input, g_state.embeddings, mode, 3, g_state.cc->models[g_state.modelKey].bpe_tokenizer.get());
+        auto out = g_cc.forward("user", floatToDouble(emb));
+        auto outFloat = doubleToFloat(out);
 
-    result = cmd;
-    return result.c_str();
+        // Step 2: Predict command
+        string predicted_cmd = findClosestWord(outFloat, g_state.embeddingsForCommands);
+
+        if (debugLog)
+        {
+            cout << "[run_inference] Input: \"" << input << "\"\n";
+            cout << "[run_inference] Predicted command: \"" << predicted_cmd << "\"\n";
+        }
+
+        // Step 3: 🆕 Token-by-token generation (LLM style)
+        result = g_inference_engine->generate_tokens(input, predicted_cmd, 20);
+
+        if (debugLog)
+        {
+            cout << "[run_inference] Generated tokens: \"" << result << "\"\n";
+        }
+
+        return result.c_str();
+    }
+    catch (const std::exception &e)
+    {
+        if (debugLog)
+            cerr << "[run_inference] Exception: " << e.what() << "\n";
+        result = "ERROR: " + std::string(e.what());
+        return result.c_str();
+    }
 }
 
 #ifndef __EMSCRIPTEN__
@@ -3592,10 +3926,15 @@ int main(int argc, char *argv[]) // 🆕 Parametreleri ekledik
     {
         cout << "[TEST MODE] WASM\n";
         runMode = RunMode::SERVICE;
-        bpe_model_path = string(argv[2]) + ".json";
-        if (debugLog)
+        
+        // Set BPE path only if argv[2] is provided
+        if (argc > 2)
         {
-            cout << "[main] BPE model dosyası " << bpe_model_path << " olarak değiştirildi.\n";
+            bpe_model_path = string(argv[2]) + ".json";
+            if (debugLog)
+            {
+                cout << "[main] BPE model dosyası " << bpe_model_path << " olarak değiştirildi.\n";
+            }
         }
 
         // Manuel olarak embeddings yükle ve test et
@@ -3620,10 +3959,11 @@ int main(int argc, char *argv[]) // 🆕 Parametreleri ekledik
         if (cc.loadModel(config.modelFile, config.modelName, bpe_model_path))
         {
             cout << "[OK] Model yuklendi\n";
-            cout << "  Word embeddings: "
+            cout << "  Word tokens    : "
                  << cc.models[config.modelName].wordEmbeddings.size() << "\n";
-            cout << "  Command embeddings: "
+            cout << "  Command tokens : "
                  << cc.models[config.modelName].commandEmbeddings.size() << "\n";
+            cout << "  (Unified embeddings.db - tek vektor uzayi)\n";
 
             // Test inference
             if (!cc.models[config.modelName].wordEmbeddings.empty())
@@ -3636,7 +3976,41 @@ int main(int argc, char *argv[]) // 🆕 Parametreleri ekledik
                 cout << "[TEST] Forward pass OK (output size: "
                      << output.size() << ")\n";
 
-                generateForWasmTest(cc, "dosya kopyala", config.modelName);
+                // FIX-1+3: InferenceEngine'i BPE tokenizer + allEmbeddings ile başlat
+                if (!g_param_extractor)
+                {
+                    // allEmbeddings = wordEmbeddings + commandEmbeddings birleşimi
+                    unordered_map<string, vector<float>> all_emb_test =
+                        cc.models[config.modelName].wordEmbeddings;
+                    for (const auto &[k, v] : cc.models[config.modelName].commandEmbeddings)
+                        all_emb_test.emplace(k, v);
+
+                    auto *bpe_tok_test = cc.models[config.modelName].bpe_tokenizer.get();
+                    TokenizerMode tmode_test = cc.models[config.modelName].mode;
+
+                    // CommandParamExtractor orijinal imzası: (embeddings, schema_json_str, debug)
+                    g_param_extractor = new CommandParamExtractor(
+                        all_emb_test, "", debugLog);
+
+                    if (!g_inference_engine)
+                    {
+                        g_inference_engine = new InferenceEngine(
+                            g_param_extractor,
+                            all_emb_test,
+                            cc.models[config.modelName].commandEmbeddings,
+                            debugLog,
+                            tmode_test,
+                            bpe_tok_test);
+
+                        // Schema'yı JSON dosyasından yükle
+                        g_inference_engine->init_with_schema("LLM/Embeddings/command_schema.json");
+
+                        if (debugLog)
+                            cout << "[WASM-TEST] InferenceEngine initialized (BPE+AllEmb)\n";
+                    }
+                }
+
+                generateForWasmTest(cc, "backup/ dizinine git", config.modelName);
             }
         }
         else
@@ -3713,14 +4087,18 @@ int main(int argc, char *argv[]) // 🆕 Parametreleri ekledik
 
     loadEmbeddingsDB(state);
 
-    // ✅ 2. EMBEDDINGS'LERİ MODEL'E AKTAR
-    cc.models[config.modelName].wordEmbeddings = state.embeddings;
+    // UNIFIED EMBEDDİNG → Model'e aktar
+    // wordEmbeddings    : sentence_embedding() için kullanılır
+    // commandEmbeddings : findClosestWord() için kullanılır
+    // Her iki harita da aynı embeddings.db'den geliyor; <dir> vb.
+    // için tek tutarlı vektör var.
+    cc.models[config.modelName].wordEmbeddings    = state.embeddings;
     cc.models[config.modelName].commandEmbeddings = state.embeddingsForCommands;
-    cc.models[config.modelName].mode = state.mode;
+    cc.models[config.modelName].mode              = state.mode;
 
-    cout << "[INFO] Embeddings modele aktarildi:\n";
-    cout << "  Words   : " << cc.models[config.modelName].wordEmbeddings.size() << "\n";
-    cout << "  Commands: " << cc.models[config.modelName].commandEmbeddings.size() << "\n";
+    cout << "[INFO] Unified embeddings modele aktarildi:\n";
+    cout << "  Word tokens   : " << cc.models[config.modelName].wordEmbeddings.size()    << "\n";
+    cout << "  Command tokens: " << cc.models[config.modelName].commandEmbeddings.size() << "\n";
 
     // 🔴 SERVICE MODE → while yok
     if (runMode == RunMode::SERVICE)

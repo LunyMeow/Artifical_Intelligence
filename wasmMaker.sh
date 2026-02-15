@@ -1,6 +1,6 @@
 #!/bin/bash
 
-emcc Buildv1_3_2.cpp ByteBPE/ByteBPETokenizer.cpp \
+emcc Buildv1_3_2.cpp ByteBPE/ByteBPETokenizer.cpp CommandParamExtractor.cpp InferenceEngine.cpp \
   -o web/public/wasm/model.js \
   -s WASM=1 \
   -s EXPORTED_FUNCTIONS='["_load_user_model","_run_inference","_malloc","_free"]' \
@@ -18,3 +18,4 @@ emcc Buildv1_3_2.cpp ByteBPE/ByteBPETokenizer.cpp \
 
 echo "✅ Build complete: web/public/wasm/model.js and model.wasm"
 echo "Exception handling: ENABLED"
+echo "Modules: Buildv1_3_2, ByteBPETokenizer, CommandParamExtractor, InferenceEngine"

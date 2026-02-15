@@ -1,18 +1,18 @@
 {
   "mkdir": {
-    "params": ["<DIR>"],
+    "params": ["<dir>"],
     "description": "Yeni klasör oluşturur"
   },
   "rmdir": {
-    "params": ["<DIR>"],
+    "params": ["<dir>"],
     "description": "Boş klasörü siler"
   },
   "cd": {
-    "params": ["<DIR>"],
+    "params": ["<dir>"],
     "description": "Dizini değiştirir"
   },
   "ls": {
-    "params": ["<DIR>"],
+    "params": ["<dir>"],
     "description": "Dizin içeriğini listeler"
   },
   "pwd": {
@@ -21,76 +21,76 @@
   },
 
   "touch": {
-    "params": ["<FILE>"],
+    "params": ["<file>"],
     "description": "Boş dosya oluşturur"
   },
   "rm": {
-    "params": ["<FILE>"],
+    "params": ["<file>"],
     "description": "Dosya siler"
   },
   "cp": {
-    "params": ["<SRC>", "<DST>"],
+    "params": ["<src>", "<dst>"],
     "description": "Dosya veya klasörü kopyalar"
   },
   "mv": {
-    "params": ["<SRC>", "<DST>"],
+    "params": ["<src>", "<dst>"],
     "description": "Dosya veya klasörü taşır / yeniden adlandırır"
   },
 
   "cat": {
-    "params": ["<FILE>"],
+    "params": ["<file>"],
     "description": "Dosya içeriğini gösterir"
   },
   "less": {
-    "params": ["<FILE>"],
+    "params": ["<file>"],
     "description": "Dosyayı sayfa sayfa gösterir"
   },
   "nano": {
-    "params": ["<FILE>"],
+    "params": ["<file>"],
     "description": "Dosyayı nano editör ile açar"
   },
   "vim": {
-    "params": ["<FILE>"],
+    "params": ["<file>"],
     "description": "Dosyayı vim editör ile açar"
   },
 
   "chmod": {
-    "params": ["<MODE>", "<FILE>"],
+    "params": ["<mode>", "<file>"],
     "description": "Dosya izinlerini değiştirir"
   },
   "chown": {
-    "params": ["<USER>", "<FILE>"],
+    "params": ["<user>", "<file>"],
     "description": "Dosya sahibini değiştirir"
   },
 
   "find": {
-    "params": ["<DIR>", "<NAME>"],
+    "params": ["<dir>", "<name>"],
     "description": "Dosya veya klasör arar"
   },
   "grep": {
-    "params": ["<PATTERN>", "<FILE>"],
+    "params": ["<pattern>", "<file>"],
     "description": "Dosya içinde metin arar"
   },
 
   "tar": {
-    "params": ["<ARCHIVE>", "<DIR>"],
+    "params": ["<archive>", "<dir>"],
     "description": "Arşiv oluşturur veya açar"
   },
   "zip": {
-    "params": ["<ARCHIVE>", "<FILE>"],
+    "params": ["<archive>", "<file>"],
     "description": "Zip arşivi oluşturur"
   },
   "unzip": {
-    "params": ["<ARCHIVE>"],
+    "params": ["<archive>"],
     "description": "Zip arşivini açar"
   },
 
   "wget": {
-    "params": ["<URL>"],
+    "params": ["<url>"],
     "description": "İnternetten dosya indirir"
   },
   "curl": {
-    "params": ["<URL>"],
+    "params": ["<url>"],
     "description": "URL içeriğini alır"
   },
 
@@ -99,7 +99,7 @@
     "description": "Çalışan işlemleri listeler"
   },
   "kill": {
-    "params": ["<PID>"],
+    "params": ["<pid>"],
     "description": "İşlemi sonlandırır"
   },
   "top": {
